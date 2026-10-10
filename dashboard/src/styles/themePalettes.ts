@@ -25,6 +25,7 @@ export const VALID_PALETTES: ThemePalette[] = [
 /** Curated palettes only — "custom" is handled separately via a hex value. */
 export const CURATED_PALETTES: ThemePalette[] = [...VALID_PALETTES];
 
+// Keep the legacy "rose" key so saved appearances use the new Soft Blue brand.
 export const DEFAULT_PALETTE: ThemePalette = "rose";
 export const DEFAULT_CUSTOM_COLOR = "#4B74FA";
 
@@ -44,7 +45,7 @@ export const PALETTE_STORAGE_KEY = LEGACY_PALETTE_STORAGE_KEY;
 
 /** Swatch color shown in the palette picker (light brand). */
 export const PALETTE_SWATCH: Record<ThemePalette, string> = {
-  rose: "#E85D75",
+  rose: "#3B82B8",
   tech: "#4B74FA",
   indigo: "#6366F1",
   teal: "#0D9488",
@@ -76,23 +77,23 @@ export const ANTD_BRAND_TOKENS: Record<
 > = {
   rose: {
     light: {
-      colorPrimary: "#E85D75",
-      colorPrimaryHover: "#D14A62",
-      colorPrimaryActive: "#B83A50",
-      colorLink: "#E85D75",
+      colorPrimary: "#3B82B8",
+      colorPrimaryHover: "#3273A5",
+      colorPrimaryActive: "#28618E",
+      colorLink: "#3B82B8",
     },
     dark: {
-      colorPrimary: "#F08B9A",
-      colorPrimaryBg: "rgba(232, 93, 117, 0.12)",
-      colorPrimaryBgHover: "rgba(232, 93, 117, 0.16)",
-      colorPrimaryBorder: "rgba(232, 93, 117, 0.25)",
-      colorPrimaryBorderHover: "rgba(232, 93, 117, 0.35)",
-      colorPrimaryHover: "#F5A8B4",
-      colorPrimaryActive: "#E85D75",
-      colorPrimaryText: "#F08B9A",
-      colorPrimaryTextHover: "#F5A8B4",
-      colorPrimaryTextActive: "#E85D75",
-      colorLink: "#F08B9A",
+      colorPrimary: "#8CC8EE",
+      colorPrimaryBg: "rgba(59, 130, 184, 0.12)",
+      colorPrimaryBgHover: "rgba(59, 130, 184, 0.16)",
+      colorPrimaryBorder: "rgba(59, 130, 184, 0.25)",
+      colorPrimaryBorderHover: "rgba(59, 130, 184, 0.35)",
+      colorPrimaryHover: "#B5DEFA",
+      colorPrimaryActive: "#3B82B8",
+      colorPrimaryText: "#8CC8EE",
+      colorPrimaryTextHover: "#B5DEFA",
+      colorPrimaryTextActive: "#3B82B8",
+      colorLink: "#8CC8EE",
     },
   },
   tech: {

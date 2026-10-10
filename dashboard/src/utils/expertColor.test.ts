@@ -10,7 +10,7 @@ import {
 
 describe("resolveExpertPalette", () => {
   it("matches exact curated swatches", () => {
-    expect(resolveExpertPalette("#E85D75")).toBe("rose");
+    expect(resolveExpertPalette("#3B82B8")).toBe("rose");
     expect(resolveExpertPalette("#6366F1")).toBe("indigo");
   });
 
@@ -30,8 +30,8 @@ describe("resolveExpertPalette", () => {
 
 describe("parseStoredColor", () => {
   it("restores the curated key when the hex matches a swatch exactly", () => {
-    expect(parseStoredColor("#E85D75")).toBe("rose");
-    expect(parseStoredColor("#e85d75")).toBe("rose");
+    expect(parseStoredColor("#3B82B8")).toBe("rose");
+    expect(parseStoredColor("#3b82b8")).toBe("rose");
     expect(parseStoredColor(PALETTE_SWATCH.slate)).toBe("slate");
   });
 
