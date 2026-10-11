@@ -36,7 +36,7 @@ def test_interrupted_enterprise_migration_preserves_existing_department(tmp_path
         with pool.connect() as conn:
             assert conn.execute("SELECT name FROM departments").fetchone()[0] == "Sales"
             assert conn.execute("SELECT COUNT(*) FROM department_runtimes").fetchone()[0] == 0
-            assert conn.execute("SELECT version FROM _schema_version").fetchone()[0] == 21
+            assert conn.execute("SELECT version FROM _schema_version").fetchone()[0] == 22
     finally:
         pool.close()
 
@@ -60,6 +60,6 @@ def test_enterprise_schema_repairs_version_ahead_database(tmp_path: Path) -> Non
             assert "enterprise_kind" in {
                 row["name"] for row in conn.execute("PRAGMA table_info(agents)")
             }
-            assert conn.execute("SELECT version FROM _schema_version").fetchone()[0] == 21
+            assert conn.execute("SELECT version FROM _schema_version").fetchone()[0] == 22
     finally:
         pool.close()

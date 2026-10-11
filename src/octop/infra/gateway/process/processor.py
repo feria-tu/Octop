@@ -1271,7 +1271,9 @@ class GlobalProcessor:
                 usage=usage_tracker.usage,
             )
             await self._record_turn_history(thread_id, history_tracker)
-        yield _maybe_stamp_team_host(self._done_chunk(thread_id), agent_id, team_host)
+        yield _maybe_stamp_team_host(
+            await self.durable_done_chunk(agent_id, thread_id), agent_id, team_host
+        )
 
     async def iter_hitl_resume_chunks(
         self,
@@ -1547,6 +1549,21 @@ class GlobalProcessor:
             payload["pending_plan_path"] = thread.pending_plan_path
         return payload
 
+    async def durable_done_chunk(self, agent_id: str, thread_id: str) -> dict[str, Any]:
+        payload = self._done_chunk(thread_id)
+        service = getattr(self._agent_manager, "run_service", None)
+        if service is None:
+            return payload
+        from octop.infra.users.enterprise import db_call
+
+        row = await db_call(service.repo.latest, agent_id, thread_id)
+        if row is None:
+            return payload
+        terminal = await db_call(service.repo.terminal_event, row.run_id)
+        if terminal is not None:
+            return {**terminal, **payload}
+        return {**payload, "run_id": row.run_id, "state": row.state}
+
     def _plan_ready_hint(self, thread_id: str, locale: str) -> str:
         from octop.i18n import tr
         from octop.infra.agents.conversation_mode import parse_conversation_mode
@@ -1741,7 +1758,15 @@ class GlobalProcessor:
         else:
             try:
                 harness = self._agent_manager.get_agent(agent_id)
-                appended = await harness.aappend_messages(thread_id, canonical)
+                from octop.infra.runs.service import RunService
+
+                service = getattr(harness, "_octop_run_service", None)
+                if isinstance(service, RunService):
+                    appended = await service.checkpoint_edit(
+                        agent_id, thread_id, lambda: harness.aappend_messages(thread_id, canonical)
+                    )
+                else:
+                    appended = await harness.aappend_messages(thread_id, canonical)
             except Exception:
                 logger.warning(
                     "failed to append slash checkpoint for thread=%s",

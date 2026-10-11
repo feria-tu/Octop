@@ -44,6 +44,7 @@ async def test_dashboard_hitl_resume_registers_followup_hitl_required() -> None:
         }
 
     processor = MagicMock()
+    processor.durable_done_chunk = AsyncMock(return_value={"type": "done"})
     processor.iter_hitl_resume_chunks = _resume
     hitl = HitlChannelCoordinator()
     first = hitl.store.register(
@@ -101,6 +102,7 @@ async def test_dashboard_hitl_resume_registers_without_prior_pending() -> None:
         }
 
     processor = MagicMock()
+    processor.durable_done_chunk = AsyncMock(return_value={"type": "done"})
     processor.iter_hitl_resume_chunks = _resume
     hitl = HitlChannelCoordinator()
 
@@ -138,6 +140,7 @@ async def test_dashboard_hitl_resume_finishes_after_client_disconnect() -> None:
         completed = True
 
     processor = MagicMock()
+    processor.durable_done_chunk = AsyncMock(return_value={"type": "done"})
     processor.iter_hitl_resume_chunks = _resume
     hitl = HitlChannelCoordinator()
 
@@ -169,6 +172,7 @@ async def test_dashboard_hitl_resume_marks_pending_resolved_when_stream_errors()
         yield {}  # pragma: no cover
 
     processor = MagicMock()
+    processor.durable_done_chunk = AsyncMock(return_value={"type": "done"})
     processor.iter_hitl_resume_chunks = _resume
     hitl = HitlChannelCoordinator()
     first = hitl.store.register(

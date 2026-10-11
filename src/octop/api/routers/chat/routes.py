@@ -158,7 +158,10 @@ async def iter_dashboard_hitl_resume_sse(
             if not disconnected:
                 yield format_sse("chunk", chunk)
         if not disconnected:
-            yield format_sse("chunk", {"type": "done"})
+            done = {"type": "done"}
+            if hasattr(processor, "durable_done_chunk"):
+                done = await processor.durable_done_chunk(agent_id, thread_id)
+            yield format_sse("chunk", done)
     except Exception as exc:
         # Resume failed after we cleared the pause for reinject safety — do not
         # leave the record looking like a successful approve/reject.

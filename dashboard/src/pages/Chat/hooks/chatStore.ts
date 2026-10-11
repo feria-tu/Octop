@@ -48,6 +48,7 @@ import {
   promoteAskUserToolMessage,
 } from "../utils/pendingHitl";
 import { frameBelongsToThread } from "./frameThread";
+import { acceptRunEvent, runSubscribeCursor } from "./runEventCursor";
 import {
   MAX_STREAM_RESUME_ATTEMPTS,
   STREAM_STALE_WITHOUT_SOCKET_MS,
@@ -2097,6 +2098,10 @@ function parseHitlRequest(raw: Record<string, unknown>) {
         args: parseActionArgs(row.args),
         description:
           typeof row.description === "string" ? row.description : undefined,
+        approval_id:
+          typeof row.approval_id === "string" ? row.approval_id : undefined,
+        args_digest:
+          typeof row.args_digest === "string" ? row.args_digest : undefined,
       };
     });
   const review_configs = Array.isArray(normalized.review_configs)
@@ -2121,6 +2126,9 @@ function parseHitlRequest(raw: Record<string, unknown>) {
     review_configs,
     status: "pending" as const,
     ...(pendingId ? { pending_id: pendingId } : {}),
+    ...(typeof normalized.run_id === "string"
+      ? { run_id: normalized.run_id }
+      : {}),
   };
 }
 
@@ -2343,7 +2351,13 @@ export async function attachThread(
       touchStreamActivity(sessionId);
       startSocketPing(live);
       try {
-        ws.send(JSON.stringify({ type: "subscribe", thread_id: threadId }));
+        ws.send(
+          JSON.stringify({
+            type: "subscribe",
+            thread_id: threadId,
+            ...runSubscribeCursor(state),
+          }),
+        );
       } catch {
         // ignore
       }
@@ -2355,6 +2369,7 @@ export async function attachThread(
         const data = JSON.parse(String(event.data)) as Record<string, unknown>;
         if (!data || typeof data !== "object") return;
         if (!frameBelongsToThread(data, live.threadId)) return;
+        if (!acceptRunEvent(state, data)) return;
 
         if (data.type === "turn_status") {
           if (turnStatusAction(Boolean(data.active)) === "expect_stream") {
@@ -2599,6 +2614,7 @@ async function sendTurnWebSocket(
         const data = JSON.parse(String(event.data)) as HarnessChunk;
         if (!data || typeof data !== "object") return;
         if (!frameBelongsToThread(data, live.threadId)) return;
+        if (!acceptRunEvent(state, data)) return;
         if ((data as { type?: string }).type === "turn_status") return;
         handleHarnessChunk(state, data, sessionId);
         if (isHostTurnTerminal(data, sessionHostAgentId(state, sessionId))) {
@@ -2857,6 +2873,7 @@ async function consumeSseResponse(
       if (!line) continue;
       const chunk = parseHarnessChunk(line);
       if (!chunk) continue;
+      if (!acceptRunEvent(state, chunk)) continue;
       handleHarnessChunk(state, chunk, sessionId);
       if (chunk.type === "done" || chunk.type === "error") {
         controller.abort();
@@ -2884,6 +2901,13 @@ export async function resumeHitl(
   hitlPolicy?: { mode: string; tools?: string[] },
 ): Promise<void> {
   const state = getOrCreate(sessionId);
+  const durableHitl = [...state.messages]
+    .reverse()
+    .find(
+      (message) =>
+        message.hitlData?.run_id &&
+        (message.hitlData.status ?? "pending") === "pending",
+    )?.hitlData;
   state.abortController?.abort();
   const hitlStatus =
     dismissed || decisions.some((d) => d.type === "reject")
@@ -2924,16 +2948,39 @@ export async function resumeHitl(
   };
 
   try {
-    const res = await fetch(getApiUrl(`/agents/${agentId}/chat/hitl/resume`), {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        thread_id: threadId,
-        decisions,
-        ...(hitlPolicy ? { hitl_policy: hitlPolicy } : {}),
-      }),
-      signal: controller.signal,
-    });
+    const res = await fetch(
+      getApiUrl(
+        durableHitl?.run_id
+          ? `/runs/${durableHitl.run_id}/resume`
+          : `/agents/${agentId}/chat/hitl/resume`,
+      ),
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify(
+          durableHitl?.run_id
+            ? {
+                decisions: decisions.map((decision, index) => ({
+                  ...decision,
+                  ...(durableHitl.action_requests[index]?.approval_id
+                    ? {
+                        approval_id:
+                          durableHitl.action_requests[index].approval_id,
+                        args_digest:
+                          durableHitl.action_requests[index].args_digest,
+                      }
+                    : {}),
+                })),
+              }
+            : {
+                thread_id: threadId,
+                decisions,
+                ...(hitlPolicy ? { hitl_policy: hitlPolicy } : {}),
+              },
+        ),
+        signal: controller.signal,
+      },
+    );
     if (!res.ok) {
       appendErrorBubble(state, `HITL resume failed (${res.status})`);
       finish();

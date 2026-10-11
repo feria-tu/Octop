@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from octop_harness.security.models import SecurityPolicy
@@ -147,25 +147,59 @@ def test_store_set_persists_once() -> None:
 
 
 @pytest.mark.asyncio
-async def test_resume_hitl_binds_thread_scope() -> None:
+async def test_resume_hitl_binds_thread_scope(manager: AgentManager) -> None:
     seen: list[str | None] = []
+    resumed_configs: list[dict[str, Any]] = []
 
-    async def fake_resume(agent_id: str, thread_id: str, decisions: list[dict[str, Any]]) -> Any:
+    async def fake_resume(*args: Any, **kwargs: Any) -> Any:
         seen.append(current_hitl_thread_id())
+        resumed_configs.append(kwargs["config"])
         if False:
             yield {}
 
-    manager = AgentManager.__new__(AgentManager)
-    manager._harness_manager = SimpleNamespace(resume_hitl=fake_resume)
-    manager._history_backfills = {}
-    manager._invocation_waiters = {}
-    manager._active_invocations = {}
-    manager._thread_execution_locks = {}
-    manager._bootstrap_graph_refresh_pending = set()
+    uid = manager._repos.user_repo.create(username="owner", role="user")
+    manager._repos.agent_repo.create(agent_id="agt", user_id=uid, name="Assistant")
+    manager._repos.thread_repo.insert(
+        thread_id="thr_live", agent_id="agt", user_id=uid, channel_type="web", session_key="session"
+    )
+    service = manager.run_service
+    version = await service.version("agt", uid)
+    repo = service.repo
+    repo.create(
+        "run",
+        "agt",
+        "thr_live",
+        uid,
+        version,
+        '{"messages":"original input","thread_id":"thr_live","user":"' + str(uid) + '"}',
+    )
+    row = repo.claim("run", service.node)
+    repo.pause("run", service.node, row.fence)
+    graph = SimpleNamespace(
+        aget_state=AsyncMock(
+            return_value=SimpleNamespace(
+                tasks=[
+                    SimpleNamespace(
+                        interrupts=[
+                            SimpleNamespace(
+                                id="interrupt-1",
+                                value={"action_requests": [{"name": "write_file", "args": {}}]},
+                            )
+                        ]
+                    )
+                ]
+            )
+        ),
+        astream=fake_resume,
+    )
+    agent = SimpleNamespace(graph=graph, checkpointer=None, _base_graph=None)
+    manager._harness_manager = SimpleNamespace(get_agent=lambda _id: SimpleNamespace(agent=agent))
 
     chunks = [item async for item in manager.resume_hitl("agt", "thr_live", [{"type": "approve"}])]
-    assert chunks == []
+    assert [item for item in chunks if item["type"] != "run_started"] == []
     assert seen == ["thr_live"]
+    assert resumed_configs[0]["configurable"]["user"] == str(uid)
+    assert resumed_configs[0]["configurable"]["thread_id"] == "thr_live"
     assert current_hitl_thread_id() is None
 
 

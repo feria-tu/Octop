@@ -20,6 +20,7 @@ from octop.infra.db.repos.knowledge import KnowledgeRepo
 from octop.infra.db.repos.proactive_care_config import ProactiveCareConfigRepo
 from octop.infra.db.repos.providers import ProviderRepo
 from octop.infra.db.repos.published_experts import PublishedExpertRepo
+from octop.infra.db.repos.runs import RunRepo
 from octop.infra.db.repos.secrets import SecretRepo
 from octop.infra.db.repos.sessions import SessionRepo
 from octop.infra.db.repos.settings import SettingsRepo
@@ -69,6 +70,10 @@ class RepoBundle:
     def enterprise_repo(self) -> EnterpriseRepo:
         return EnterpriseRepo(self.db)
 
+    @property
+    def run_repo(self) -> RunRepo:
+        return RunRepo(self.db)
+
     @classmethod
     def from_pool(cls, db: DatabasePool) -> RepoBundle:
         return cls(
@@ -110,6 +115,10 @@ class SharedServices:
     @property
     def db(self) -> DatabasePool:
         return self.repos.db
+
+    @property
+    def run_repo(self) -> RunRepo:
+        return self.repos.run_repo
 
     @property
     def enterprise_repo(self) -> EnterpriseRepo:

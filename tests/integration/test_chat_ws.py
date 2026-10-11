@@ -52,6 +52,19 @@ async def _turn_then_rebind(
     thread_id: str,
     gate_release: asyncio.Event,
 ) -> list[dict[str, Any]]:
+    try:
+        return await _turn_then_rebind_body(c, aid, auth, thread_id, gate_release)
+    finally:
+        gate_release.set()
+
+
+async def _turn_then_rebind_body(
+    c: httpx.AsyncClient,
+    aid: str,
+    auth: dict[str, str],
+    thread_id: str,
+    gate_release: asyncio.Event,
+) -> list[dict[str, Any]]:
     """Start a turn on conn A, drop it after the first token, re-subscribe on B.
 
     The fake stream is gated between first and second token so B can subscribe
@@ -65,17 +78,27 @@ async def _turn_then_rebind(
                 "thread_id": thread_id,
             }
         )
-        first = await ws_a.receive_json()
-        assert first.get("type") == "token"
-        assert first.get("content") == "first"
+        try:
+            started = await ws_a.receive_json()
+            assert started["type"] == "run_started"
+            assert started["run_id"] and started["seq"] == 1
+            first = await ws_a.receive_json()
+            assert first.get("type") == "token"
+            assert first.get("content") == "first"
+            assert first["run_id"] == started["run_id"]
+        except BaseException:
+            gate_release.set()
+            raise
     # A is closed; turn is blocked on gate_release (still active, not cancelled).
 
     frames: list[dict[str, Any]] = []
     async with _chat_ws(c, aid, auth) as ws_b:
         await ws_b.send_json({"type": "subscribe", "thread_id": thread_id})
-        frames.append(await ws_b.receive_json())
-        # Release the slow stream only after B is subscribed.
-        gate_release.set()
+        try:
+            frames.append(await ws_b.receive_json())
+        finally:
+            # Release even if receiving or validating subscription fails.
+            gate_release.set()
         frames.extend(await ws_b.drain_turn())
     return frames
 
@@ -114,6 +137,19 @@ async def _turn_with_second_subscriber(
     thread_id: str,
     gate_release: asyncio.Event,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    try:
+        return await _turn_with_second_subscriber_body(c, aid, auth, thread_id, gate_release)
+    finally:
+        gate_release.set()
+
+
+async def _turn_with_second_subscriber_body(
+    c: httpx.AsyncClient,
+    aid: str,
+    auth: dict[str, str],
+    thread_id: str,
+    gate_release: asyncio.Event,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Keep conn A open, subscribe conn B mid-turn; both receive remaining chunks."""
     a_frames: list[dict[str, Any]] = []
     b_frames: list[dict[str, Any]] = []
@@ -125,11 +161,18 @@ async def _turn_with_second_subscriber(
                 "thread_id": thread_id,
             }
         )
-        a_frames.append(await ws_a.receive_json())
+        try:
+            while not a_frames or a_frames[-1].get("type") != "token":
+                a_frames.append(await ws_a.receive_json())
+        except BaseException:
+            gate_release.set()
+            raise
         async with _chat_ws(c, aid, auth) as ws_b:
             await ws_b.send_json({"type": "subscribe", "thread_id": thread_id})
-            b_frames.append(await ws_b.receive_json())
-            gate_release.set()
+            try:
+                b_frames.append(await ws_b.receive_json())
+            finally:
+                gate_release.set()
             rest_a, rest_b = await asyncio.gather(ws_a.drain_turn(), ws_b.drain_turn())
             a_frames.extend(rest_a)
             b_frames.extend(rest_b)
@@ -183,7 +226,8 @@ async def test_ws_concurrent_subscribers_both_receive_later_chunks(env: Any) -> 
 
     a_frames, b_frames = await _turn_with_second_subscriber(c, aid, alice_auth, tid, gate)
 
-    assert a_frames[0].get("content") == "first"
+    assert a_frames[0]["type"] == "run_started"
+    assert a_frames[0]["run_id"] and a_frames[0]["seq"] == 1
     assert [f.get("content") for f in a_frames if f.get("type") == "token"] == ["first", "second"]
     assert a_frames[-1].get("type") == "done"
     assert b_frames[0] == {"type": "turn_status", "thread_id": tid, "active": True}

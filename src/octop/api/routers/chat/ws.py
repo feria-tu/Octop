@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import logging
@@ -72,13 +73,50 @@ async def dashboard_chat_ws(
 
     connection_id = uuid.uuid4().hex
     await websocket.accept()
+    replay_run_id: str | None = None
+    after_seq = 0
+    tail_task: asyncio.Task[None] | None = None
+    delivery_lock = asyncio.Lock()
+    service = getattr(server.app_runtime.agent_registry, "run_service", None)
 
-    async def send_frame(frame: dict[str, Any]) -> None:
+    async def send_direct(frame: dict[str, Any]) -> None:
         if websocket.application_state != WebSocketState.CONNECTED:
             return
-        await websocket.send_text(
-            json.dumps(frame, ensure_ascii=False, default=json_chunk_default),
-        )
+        await websocket.send_text(json.dumps(frame, ensure_ascii=False, default=json_chunk_default))
+
+    async def drain_events() -> None:
+        nonlocal after_seq
+        if replay_run_id is None or service is None:
+            return
+        from octop.infra.users.enterprise import db_call
+
+        async with delivery_lock:
+            run = await service.owned(replay_run_id, user.id)
+            while after_seq < run.next_seq:
+                batch = await db_call(service.repo.events, run.run_id, after_seq, 500)
+                if not batch:
+                    break
+                for event in batch:
+                    await send_direct(event)
+                    after_seq = event["seq"]
+
+    async def tail_events() -> None:
+        try:
+            while websocket.application_state == WebSocketState.CONNECTED:
+                await drain_events()
+                await asyncio.sleep(0.25)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("durable websocket tail failed")
+            await websocket.close(code=4003)
+
+    async def send_frame(frame: dict[str, Any]) -> None:
+        if replay_run_id and frame.get("run_id") == replay_run_id and frame.get("seq"):
+            await drain_events()
+            return
+        async with delivery_lock:
+            await send_direct(frame)
 
     hub.register(connection_id, send_frame)
 
@@ -109,13 +147,42 @@ async def dashboard_chat_ws(
                         {"type": "error", "message": f"thread {thread_id!r} not found"},
                     )
                     continue
-                hub.subscribe(thread_id, connection_id)
+                requested_run = str(payload.get("run_id") or "")
+                run = None
+                if requested_run and service is not None:
+                    try:
+                        cursor = payload.get("after_seq", 0)
+                        if not isinstance(cursor, int) or isinstance(cursor, bool) or cursor < 0:
+                            raise ValueError("invalid cursor")
+                        run = await service.owned(requested_run, user.id)
+                        if (
+                            run.agent_id != agent_id
+                            or run.thread_id != thread_id
+                            or cursor > run.next_seq
+                        ):
+                            raise ValueError("cursor scope")
+                    except (OctopError, ValueError, TypeError):
+                        await send_frame({"type": "error", "error_code": "FORBIDDEN"})
+                        continue
+                    if tail_task is not None:
+                        tail_task.cancel()
+                        with contextlib.suppress(asyncio.CancelledError):
+                            await tail_task
+                    replay_run_id, after_seq = requested_run, cursor
+                    # Subscribe before taking the replay head; DB polling covers remote nodes.
+                    hub.subscribe(thread_id, connection_id)
+                    await drain_events()
+                    tail_task = asyncio.create_task(tail_events())
+                else:
+                    hub.subscribe(thread_id, connection_id)
                 await send_frame(
                     {
                         "type": "turn_status",
                         "thread_id": thread_id,
-                        "active": hub.is_turn_active(thread_id),
-                    },
+                        "active": (run.state == "running")
+                        if run
+                        else hub.is_turn_active(thread_id),
+                    }
                 )
                 continue
 
@@ -183,6 +250,10 @@ async def dashboard_chat_ws(
     finally:
         # Disconnect must not cancel an in-flight turn — clients may reconnect and
         # subscribe to continue receiving subsequent chunks (weak stream resume).
+        if tail_task is not None:
+            tail_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await tail_task
         hub.unregister(connection_id)
         if websocket.application_state == WebSocketState.CONNECTED:
             with contextlib.suppress(Exception):

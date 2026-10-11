@@ -378,6 +378,10 @@ class AgentManager:
         plugin_manager: PluginManager | None = None,
     ) -> None:
         self._repos = repos
+        from octop.infra.db.services import RepoBundle
+        from octop.infra.runs.service import RunService
+
+        self.run_service = RunService(repos) if isinstance(repos, RepoBundle) else None
         self._paths = paths
         from octop.config import OctopConfig as _OctopConfig  # noqa: PLC0415
 
@@ -542,6 +546,8 @@ class AgentManager:
                 )
 
     async def shutdown(self) -> None:
+        if self.run_service is not None:
+            await self.run_service.close()
         await self.memory_slim.close()
         async with self._lock:
             if self._harness_manager:
@@ -1232,6 +1238,14 @@ class AgentManager:
         running, or no checkpointer configured for it) — both are normal,
         expected states, not errors.
         """
+        if self.run_service is not None:
+            from octop.infra.runs.service import RunConflict, conflict
+            from octop.infra.users.enterprise import db_call
+
+            try:
+                await db_call(self.run_service.repo.checkpoint_delete, agent_id, thread_id)
+            except RunConflict as exc:
+                raise conflict(exc) from exc
         try:
             harness = self.get_agent(agent_id)
         except OctopError:
@@ -1312,8 +1326,17 @@ class AgentManager:
             self._apply_pending_bootstrap_graph_refresh(agent_id)
             request = await self._prepare_enterprise_request(agent_id, request)
             req = self._prepare_stream_request(agent_id, request)
+            self._bind_run_checkpointer(agent_id)
             with hitl_thread_scope(thread_id_from_request(req)):
-                async for chunk in self._harness_manager.stream(agent_id, cast(Any, req)):
+                harness_manager = self._harness_manager
+
+                def source() -> AsyncIterator[Any]:
+                    return harness_manager.stream(agent_id, cast(Any, req))
+
+                stream = (
+                    self.run_service.stream(agent_id, req, source) if self.run_service else source()
+                )
+                async for chunk in stream:
                     yield chunk
             self._apply_pending_bootstrap_graph_refresh(agent_id)
 
@@ -1325,8 +1348,27 @@ class AgentManager:
             self._apply_pending_bootstrap_graph_refresh(agent_id)
             request = await self._prepare_enterprise_request(agent_id, request)
             req = self._prepare_stream_request(agent_id, request)
+            self._bind_run_checkpointer(agent_id)
             with hitl_thread_scope(thread_id_from_request(req)):
-                result = await self._harness_manager.call(agent_id, cast(Any, req))
+                if self.run_service:
+                    harness_manager = self._harness_manager
+
+                    async def source() -> AsyncIterator[Any]:
+                        result = await harness_manager.call(agent_id, cast(Any, req))
+                        yield {"type": "state_snapshot", "data": result}
+                        if isinstance(result, dict):
+                            for item in result.get("__interrupt__", []):
+                                yield {
+                                    "type": "hitl_required",
+                                    "request": getattr(item, "value", item),
+                                }
+
+                    result = {}
+                    async for chunk in self.run_service.stream(agent_id, req, source):
+                        if chunk.get("type") == "state_snapshot":
+                            result = chunk["data"]
+                else:
+                    result = await self._harness_manager.call(agent_id, cast(Any, req))
             self._apply_pending_bootstrap_graph_refresh(agent_id)
         if not isinstance(result, dict):
             return {"result": result}
@@ -1346,17 +1388,74 @@ class AgentManager:
             self._track_invocation(agent_id),
         ):
             self._apply_pending_bootstrap_graph_refresh(agent_id)
+            self._bind_run_checkpointer(agent_id)
             with hitl_thread_scope(thread_id):
-                async for chunk in self._harness_manager.resume_hitl(
-                    agent_id, thread_id, decisions
-                ):
+                harness_manager = self._harness_manager
+                resume_config: dict[str, Any] = {}
+
+                def source() -> AsyncIterator[Any]:
+                    if self.run_service is not None:
+                        from octop_harness.protocols.langgraph import LangGraphProtocol
+
+                        protocol = LangGraphProtocol(graph=self.get_agent(agent_id).graph)
+                        return self.run_service.resume_source(
+                            protocol,
+                            thread_id,
+                            decisions,
+                            resume_config,
+                        )
+                    return harness_manager.resume_hitl(agent_id, thread_id, decisions)
+
+                if self.run_service:
+                    from octop.infra.users.enterprise import db_call
+
+                    active = await db_call(self.run_service.repo.active, agent_id, thread_id)
+                    if active is None or active.state != "waiting_approval":
+                        raise OctopError.localized(ErrorCode.RUN_CONFLICT, status=409)
+                    resume_config = self.run_service.resume_config(
+                        json.loads(active.request_json), active
+                    )
+                    stream = self.run_service.stream(
+                        agent_id,
+                        json.loads(active.request_json),
+                        source,
+                        resume_run_id=active.run_id,
+                    )
+                else:
+                    stream = source()
+                async for chunk in stream:
                     yield chunk
             self._apply_pending_bootstrap_graph_refresh(agent_id)
 
     def cancel_stream(self, agent_id: str, thread_id: str) -> None:
         """Signal octop-harness to stop the active stream for *(agent_id, thread_id)*."""
-        if self._harness_manager is not None:
-            self._harness_manager.cancel(agent_id, thread_id)
+        if self.run_service is None:
+            if self._harness_manager is not None:
+                self._harness_manager.cancel(agent_id, thread_id)
+            return
+
+        async def cancel_and_stop() -> None:
+            await self.run_service.cancel(agent_id, thread_id)
+
+        asyncio.create_task(cancel_and_stop())
+
+    def _bind_run_checkpointer(self, agent_id: str) -> None:
+        if self.run_service is None:
+            return
+        from octop.infra.runs.checkpoints import FencedSaver
+        from octop.infra.runs.subagents import install_subagent_policy
+
+        agent = self.get_agent(agent_id)
+        runtime_agent = cast(Any, agent)
+        runtime_agent._octop_run_service = self.run_service
+        runtime_agent._octop_agent_id = agent_id
+        install_subagent_policy(agent)
+        saver = getattr(agent, "checkpointer", None)
+        graph = getattr(agent, "_base_graph", None)
+        if saver and graph is not None and not isinstance(saver, FencedSaver):
+            wrapped = FencedSaver(saver, self.run_service, agent_id)
+            graph.checkpointer = wrapped
+            agent._checkpointer_instance = wrapped
 
     def get_thread_model(self, agent_id: str, thread_id: str) -> str | None:
         if self._harness_manager is None:
@@ -2688,6 +2787,7 @@ class AgentManager:
                 self._mark_bootstrap_graph_refresh_pending(agent_id, agent)
 
             agent.on_bootstrap_complete = _on_bootstrap_complete
+        self._bind_run_checkpointer(row.agent_id)
 
     def _mark_bootstrap_graph_refresh_pending(self, agent_id: str, agent: HarnessAgent) -> None:
         """Record DB-backed config updates; graph rebuild runs on the next turn."""
@@ -3174,6 +3274,9 @@ class AgentManager:
             if persisted:
                 cfg = persisted
 
+        if stored:
+            row = self._repos.agent_repo.get(row.agent_id) or row
+            cfg = self._agent_config_dict(row)
         backend = self._backend_spec_for_row(row, cfg=cfg, workspace_dir=workspace_dir)
         ws = self._backend_workspace_for_row(
             row,
@@ -3531,7 +3634,42 @@ class AgentManager:
             )
         return replace(
             applied,
+            middleware=[
+                *(applied.middleware or []),
+                *(
+                    [self._durable_run_middleware(row, applied.tools or [])]
+                    if self.run_service is not None
+                    else []
+                ),
+            ],
             tool_guard_rules_dir=str(self._tool_guard_rules.rules_dir),
+        )
+
+    def _durable_run_middleware(self, row: AgentRow, tools: list[Any]) -> Any:
+        from octop.infra.runs.middleware import DurableRunMiddleware
+        from octop.infra.runs.service import definition_version
+
+        external_tools = [
+            tool
+            for tool in tools
+            if not str(
+                getattr(
+                    getattr(tool, "coroutine", None) or getattr(tool, "func", None),
+                    "__module__",
+                    "",
+                )
+            ).startswith("octop.infra.")
+        ]
+        return DurableRunMiddleware(
+            row.agent_id,
+            definition_version(row),
+            lambda: {
+                str(getattr(tool, "name", ""))
+                for tool in [
+                    *external_tools,
+                    *getattr(self.get_agent(row.agent_id), "_mcp_tools", []),
+                ]
+            },
         )
 
     def _install_team_host_dispatch(self) -> None:

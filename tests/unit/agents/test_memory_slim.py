@@ -31,6 +31,7 @@ def make_manager(tmp_path):
     memory = Memory("test_slim", backend_config={"db_path": str(path)})
     agent = SimpleNamespace(_memory_runtime=SimpleNamespace(memory=memory))
     registry = AgentManager.__new__(AgentManager)
+    registry.run_service = None
     registry._active_invocations = {}
     registry._invocation_waiters = {}
     registry._history_backfills = {}

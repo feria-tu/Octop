@@ -72,6 +72,19 @@ def _seed_test_provider(manager: AgentManager) -> None:
     )
 
 
+def _seed_owned_execution(manager: AgentManager, agent_id: str, thread_id: str) -> int:
+    uid = manager._repos.user_repo.create(username=agent_id, role="user")
+    manager._repos.agent_repo.create(agent_id=agent_id, user_id=uid, name="Assistant")
+    manager._repos.thread_repo.insert(
+        thread_id=thread_id,
+        agent_id=agent_id,
+        user_id=uid,
+        channel_type="web",
+        session_key=f"test:{thread_id}",
+    )
+    return uid
+
+
 def _row(
     *,
     agent_id: str = "01AGENT",
@@ -953,6 +966,7 @@ async def test_delete_thread_checkpoint_propagates_unexpected_errors(
 @pytest.mark.asyncio
 async def test_stream_applies_bootstrap_refresh_after_turn(manager: AgentManager) -> None:
     agent_id = "AGT_STREAM"
+    _seed_owned_execution(manager, agent_id, "thr1")
     agent = MagicMock()
     harness_manager = MagicMock()
 
@@ -966,7 +980,10 @@ async def test_stream_applies_bootstrap_refresh_after_turn(manager: AgentManager
 
     chunks = [chunk async for chunk in manager.stream(agent_id, {"thread_id": "thr1"})]
 
-    assert chunks == [{"type": "token", "content": "hi"}]
+    assert chunks[0]["type"] == "run_started"
+    assert [
+        {k: chunk[k] for k in ("type", "content")} for chunk in chunks if chunk["type"] == "token"
+    ] == [{"type": "token", "content": "hi"}]
     agent._init_graph.assert_called_once()
     assert agent_id not in manager._bootstrap_graph_refresh_pending
 
@@ -976,6 +993,7 @@ async def test_history_backfill_refuses_while_agent_stream_is_active(
     manager: AgentManager,
 ) -> None:
     agent_id = "AGT_BUSY"
+    _seed_owned_execution(manager, agent_id, "thr-busy")
     started = asyncio.Event()
     release = asyncio.Event()
     harness_manager = MagicMock()
@@ -1004,6 +1022,7 @@ async def test_waiting_agent_stream_prevents_next_history_backfill(
     manager: AgentManager,
 ) -> None:
     agent_id = "AGT_PRIORITY"
+    _seed_owned_execution(manager, agent_id, "thr-priority")
     stream_started = asyncio.Event()
     stream_release = asyncio.Event()
     harness_manager = MagicMock()
@@ -2299,6 +2318,7 @@ async def test_stream_and_resume_hitl_serialize_per_thread(
     inside = 0
     entered = asyncio.Event()
     release = asyncio.Event()
+    _seed_owned_execution(manager, "01AGENT", "thr-1")
 
     async def _stream(agent_id: str, request: dict[str, Any], **_kw: Any) -> AsyncIterator[Any]:
         nonlocal peak, inside
@@ -2308,20 +2328,44 @@ async def test_stream_and_resume_hitl_serialize_per_thread(
         await release.wait()
         inside -= 1
         yield {"type": "token", "content": "ok"}
+        yield {
+            "type": "hitl_required",
+            "request": {"action_requests": [{"name": "write_file", "args": {}}]},
+        }
 
-    async def _resume(
-        agent_id: str, thread_id: str, decisions: list[Any], **_kw: Any
-    ) -> AsyncIterator[Any]:
+    async def _resume(*_args: Any, **_kw: Any) -> AsyncIterator[Any]:
         nonlocal peak, inside
         inside += 1
         peak = max(peak, inside)
         await release.wait()
         inside -= 1
-        yield {"type": "token", "content": "resumed"}
+        yield {"type": "values", "data": {"messages": []}}
 
-    manager._harness_manager = SimpleNamespace(stream=_stream, resume_hitl=_resume)
+    graph = SimpleNamespace(
+        aget_state=AsyncMock(
+            return_value=SimpleNamespace(
+                tasks=[
+                    SimpleNamespace(
+                        interrupts=[
+                            SimpleNamespace(
+                                id="interrupt-1",
+                                value={"action_requests": [{"name": "write_file", "args": {}}]},
+                            )
+                        ]
+                    )
+                ]
+            )
+        ),
+        astream=_resume,
+    )
+    agent = SimpleNamespace(graph=graph, checkpointer=None, _base_graph=None)
+    manager._harness_manager = SimpleNamespace(
+        stream=_stream, get_agent=lambda _id: SimpleNamespace(agent=agent)
+    )
 
-    turn = asyncio.create_task(_collect_async(manager.stream("01AGENT", {"thread_id": "thr-1"})))
+    turn = asyncio.create_task(
+        _collect_async(manager.stream("01AGENT", {"thread_id": "thr-1", "messages": "hello"}))
+    )
     await entered.wait()
     resume = asyncio.create_task(
         _collect_async(manager.resume_hitl("01AGENT", "thr-1", [{"type": "approve"}]))

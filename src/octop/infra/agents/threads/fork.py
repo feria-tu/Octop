@@ -172,10 +172,17 @@ async def write_checkpoint_messages(
             ErrorCode.AGENT_NOT_RUNNING,
             "agent checkpointer cannot copy thread state",
         )
-    await aupdate(
-        {"configurable": {"thread_id": thread_id}},
-        {"messages": messages},
-    )
+    from octop.infra.runs.service import RunService
+
+    service = getattr(harness, "_octop_run_service", None)
+
+    async def update() -> Any:
+        return await aupdate({"configurable": {"thread_id": thread_id}}, {"messages": messages})
+
+    if isinstance(service, RunService):
+        await service.checkpoint_edit(harness._octop_agent_id, thread_id, update)
+    else:
+        await update()
 
 
 async def fork_dashboard_thread(

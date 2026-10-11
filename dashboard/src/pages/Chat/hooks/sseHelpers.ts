@@ -34,6 +34,8 @@ export interface HitlActionRequest {
   name: string;
   args?: Record<string, unknown>;
   description?: string;
+  approval_id?: string;
+  args_digest?: string;
 }
 
 export type HitlRequestResolution = "approve" | "allow_tool" | "allow_all";
@@ -44,6 +46,7 @@ export interface HitlRequestData {
   status?: "pending" | "approved" | "rejected";
   resolution?: HitlRequestResolution;
   pending_id?: string;
+  run_id?: string;
 }
 
 export interface ChatAttachment {

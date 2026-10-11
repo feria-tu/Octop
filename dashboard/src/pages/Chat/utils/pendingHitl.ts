@@ -74,6 +74,7 @@ export function findAutoResumableApproval(
 ): PendingApproval | null {
   const pending = findPendingApproval(messages);
   if (!pending) return null;
+  if (pending.actions.some((action) => action.approval_id)) return null;
   if (policy.mode === "allow_all") return pending;
   if (policy.mode === "allow_tools") {
     const allowed = new Set(policy.tools ?? []);
