@@ -68,7 +68,9 @@ def _tool_ctx() -> tuple[int, bool, list[str], str]:
     return user_id, is_admin, ids, locale
 
 
-def build_knowledge_tools(services: Any) -> list[StructuredTool]:
+def build_knowledge_tools(
+    services: Any, *, granted_base_ids: list[str] | None = None
+) -> list[StructuredTool]:
     """Return built-in knowledge retrieval tools (wired via HarnessAgentConfig.tools)."""
 
     async def search_knowledge(
@@ -93,6 +95,16 @@ def build_knowledge_tools(services: Any) -> list[StructuredTool]:
     ) -> str:
         try:
             user_id, is_admin, kb_ids, locale = _tool_ctx()
+            visible_bases = None
+            if granted_base_ids is not None:
+                from octop.infra.users.enterprise import db_call
+
+                kb_ids = [kb_id for kb_id in kb_ids if kb_id in granted_base_ids]
+                visible_bases = [
+                    base
+                    for kb_id in kb_ids
+                    if (base := await db_call(services.knowledge_repo.get_base, kb_id)) is not None
+                ]
             if not kb_ids:
                 return "No knowledge bases selected for this turn."
             context = await retrieve_context(
@@ -103,6 +115,7 @@ def build_knowledge_tools(services: Any) -> list[StructuredTool]:
                 knowledge_base_ids=kb_ids,
                 k=k,
                 locale=locale,
+                visible_bases=visible_bases,
             )
             if not context:
                 return "No relevant passages found."

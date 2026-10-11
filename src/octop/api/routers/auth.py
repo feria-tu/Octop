@@ -29,6 +29,7 @@ def _user_json(user: Any, *, locale: str | None = None) -> dict[str, Any]:
         "username": user.username,
         "role": user.role,
         "display_name": user.display_name,
+        "department_id": getattr(user, "department_id", None),
         "locale": loc,
         "permissions": effective_permissions(user),
     }

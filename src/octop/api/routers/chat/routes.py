@@ -254,6 +254,13 @@ async def polish_prompt(
         raise OctopError(ErrorCode.SLASH_BAD_ARGS, "text is required")
 
     harness = server.app_runtime.agent_registry.get_agent(agent_id)
+    row = server.app_runtime.agent_registry.get_row(agent_id)
+    if (
+        getattr(row, "enterprise_kind", "legacy") in {"personal", "runtime"}
+        and body.default_model
+        and body.default_model != harness.config.pick_default_model_ref()
+    ):
+        raise OctopError.localized(ErrorCode.FORBIDDEN)
     model_ref = (body.default_model or "").strip() or harness.config.pick_default_model_ref()
     llm = harness.model_factory.get(model_ref)
     try:

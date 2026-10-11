@@ -39,6 +39,10 @@ class UserCreateBody(BaseModel):
     workspace_root_dir: str | None = None
     token_quota: int | None = Field(default=None, ge=0)
     max_agents: int | None = Field(default=None, ge=0)
+    department_id: str | None = Field(
+        default=None,
+        description="Company department; assigning a non-admin employee creates a managed personal assistant.",
+    )
 
 
 class UserPatchBody(BaseModel):
@@ -55,6 +59,10 @@ class UserPatchBody(BaseModel):
     workspace_root_dir: str | None = None
     token_quota: int | None = Field(default=None, ge=0)
     max_agents: int | None = Field(default=None, ge=0)
+    department_id: str | None = Field(
+        default=None,
+        description="Reassign or remove department membership; old department access is revoked immediately.",
+    )
 
 
 class ResetPasswordBody(BaseModel):
@@ -112,6 +120,10 @@ def _row_to_dict(r: Any, policy: Any | None = None, server: Any = None) -> dict[
         "permissions": list(getattr(r, "permissions", None) or []),
         "role_name": getattr(r, "role_name", None) or None,
         "avatar_icon": getattr(r, "avatar_icon", None) or None,
+        "department_id": getattr(r, "department_id", None),
+        "assistant": server.services.enterprise_repo.assistant_status(r.id)
+        if server is not None and getattr(r, "department_id", None)
+        else None,
         "avatar_url": _user_avatar_url(server, int(r.id)) if server is not None else None,
         **public_policy_fields(policy),
     }
@@ -286,6 +298,13 @@ async def create_user(
         server, body.role
     )
     _require_admin_to_grant_admin(actor, role_id)
+    if body.department_id is not None:
+        from octop.infra.users.enterprise import require_company_admin
+
+        require_company_admin(actor)
+        await server.enterprise.require_department(body.department_id)
+    elif role_id != Role.ADMIN and await server.enterprise.departments():
+        raise OctopError.localized(ErrorCode.FORBIDDEN, status=400)
     if role_id == Role.ADMIN:
         permissions: list[str] = []
     elif "permissions" in body.model_fields_set:
@@ -315,6 +334,8 @@ async def create_user(
         role_name=role_name,
     )
     await server.user_manager.set_resource_policy(user.username, **policy_kwargs)
+    if body.department_id is not None:
+        await server.enterprise.assign_department(actor, user.id, body.department_id)
     row = server.user_manager.get_row(user.id)
     assert row is not None
     return _row_to_dict(row, server.services.user_policy_repo.list_for_user(row.id), server)
@@ -351,7 +372,12 @@ async def _batch_apply_one(
             await server.user_manager.enable(row.username)
         elif action == "disable":
             await server.user_manager.disable(row.username)
+            await server.enterprise.revoke_user_runtimes(user_id)
+            personal = server.services.enterprise_repo.assistant_status(user_id)["agent_id"]
+            if personal:
+                await server.enterprise.stop_runtime(personal)
         elif action == "delete":
+            await server.enterprise.remove_employee_assistants(user_id)
             await server.user_manager.remove(row.username)
         elif action == "set_token_quota":
             await server.user_manager.set_resource_policy(
@@ -450,6 +476,12 @@ async def patch_user(
     row = server.user_manager.get_row(user_id)
     if row is None:
         raise OctopError(ErrorCode.NOT_FOUND, "user not found")
+    if "department_id" in body.model_fields_set:
+        from octop.infra.users.enterprise import require_company_admin
+
+        require_company_admin(actor)
+        if body.department_id is not None:
+            await server.enterprise.require_department(body.department_id)
     if body.permissions is not None:
         _assert_can_assign(actor, body.permissions)
         # An administrator account keeps full access. The form stores that as
@@ -504,6 +536,14 @@ async def patch_user(
     if policy_kwargs:
         await server.user_manager.set_resource_policy(row.username, **policy_kwargs)
     updated = server.user_manager.get_row(user_id)
+    if "department_id" in body.model_fields_set:
+        await server.enterprise.assign_department(actor, user_id, body.department_id)
+        updated = server.user_manager.get_row(user_id)
+    if body.disabled is True:
+        await server.enterprise.revoke_user_runtimes(user_id)
+        personal = server.services.enterprise_repo.assistant_status(user_id)["agent_id"]
+        if personal:
+            await server.enterprise.stop_runtime(personal)
     assert updated is not None
     return _row_to_dict(
         updated,
@@ -549,6 +589,7 @@ async def delete_user(
     row = server.user_manager.get_row(user_id)
     if row is None:
         raise OctopError(ErrorCode.NOT_FOUND, "user not found")
+    await server.enterprise.remove_employee_assistants(user_id)
     await server.user_manager.remove(row.username)
     from octop.infra.users.profile_avatar import delete_profile_avatar
 

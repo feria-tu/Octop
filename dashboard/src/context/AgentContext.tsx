@@ -25,6 +25,9 @@ import {
  */
 
 export interface OctopAgent {
+  enterprise_kind?: "legacy" | "personal" | "department" | "runtime";
+  department_id?: string | null;
+  allowed_actions?: { use: boolean; manage: boolean; edit_profile: boolean };
   /** Surrogate integer primary key from the database. */
   id: number;
   /** Public agent id used in API paths and ``X-Octop-Agent-Id``. */

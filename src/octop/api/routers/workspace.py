@@ -132,6 +132,9 @@ async def list_tree(
         agent_id, user=user, as_user=as_user, server=server, owner_only=True
     )
     io_path = _workspace_io_path(path, from_workspace=from_workspace)
+    from octop.api.common.workspace import private_content_path
+
+    io_path = await private_content_path(server, agent_id, ws, io_path)
     result = await ws.als(io_path)
     if result is None:
         raise OctopError(ErrorCode.NOT_FOUND, f"cannot list {path!r}")
@@ -164,7 +167,12 @@ async def read_file(
 ) -> dict[str, Any]:
     """Read a UTF-8 text file."""
     ws = await require_agent_workspace(agent_id, user=user, as_user=as_user, server=server)
-    content = await ws.aread_text(_workspace_io_path(path, from_workspace=from_workspace))
+    from octop.api.common.workspace import private_content_path
+
+    io_path = await private_content_path(
+        server, agent_id, ws, _workspace_io_path(path, from_workspace=from_workspace)
+    )
+    content = await ws.aread_text(io_path)
     if content is None:
         raise OctopError(ErrorCode.NOT_FOUND, f"cannot read {path!r}")
     return {"path": path, "content": coerce_read_content(content)}
@@ -345,6 +353,9 @@ async def download_file(
     """
     ws = await require_agent_workspace(agent_id, user=user, as_user=as_user, server=server)
     io_path = _workspace_io_path(path, from_workspace=from_workspace)
+    from octop.api.common.workspace import private_content_path
+
+    io_path = await private_content_path(server, agent_id, ws, io_path)
     if is_host_absolute_path(io_path) and not is_allowed_host_download_abs_path(
         io_path,
         workspace=ws.workspace_dir,
@@ -379,6 +390,9 @@ async def read_doc(
     converter = _ensure_editable_doc(path)
     ws = await require_agent_workspace(agent_id, user=user, as_user=as_user, server=server)
     io_path = _workspace_io_path(path, from_workspace=from_workspace)
+    from octop.api.common.workspace import private_content_path
+
+    io_path = await private_content_path(server, agent_id, ws, io_path)
     try:
         blob = await ws.adownload_bytes(io_path)
     except PermissionError as exc:
@@ -441,6 +455,9 @@ async def preview_media(
     path_agent = _agent_id_from_media_source(source)
     effective_agent = path_agent or agent_id
     ws = await require_running_workspace(effective_agent, user=user, as_user=as_user, server=server)
+    from octop.api.common.workspace import private_content_path
+
+    source = await private_content_path(server, effective_agent, ws, source)
     payload = await resolve_preview_payload(
         source=source,
         workspace=ws,

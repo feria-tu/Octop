@@ -48,6 +48,7 @@ export interface SsoIdentity {
 }
 
 export interface OctopUser {
+  department_id?: string | null;
   id: number;
   username: string;
   /** Role-template public id: admin | user | custom ULID. */

@@ -50,6 +50,7 @@ import { AgentCard } from "./components/AgentCard";
 import { ExpertCard } from "./components/ExpertCard";
 import type { ExpertSummary } from "./components/ExpertCard";
 import EditAgentDrawer from "./components/EditAgentDrawer";
+import ManagedAssistantsPanel from "./components/ManagedAssistantsPanel";
 import CreateFromExpertDrawer, {
   type CreateFromTemplateSource,
 } from "./components/CreateFromExpertDrawer";
@@ -114,6 +115,8 @@ export default function ExpertsPage() {
   const isMobile = useIsMobile();
   const { agents, refresh: refreshAgents } = useAgent();
   const currentUser = useCurrentUser();
+  const managedEmployee =
+    !!currentUser?.department_id && currentUser.role !== "admin";
 
   const canManagePublished = useCallback(
     (expert: PublishedExpert) =>
@@ -485,13 +488,17 @@ export default function ExpertsPage() {
             <button
               className={styles.toolbarBtnPrimary}
               type="button"
-              disabled={defaultCreating}
+              disabled={defaultCreating || managedEmployee}
               onClick={() => void openDefaultCreate()}
             >
               <Plus size={14} />
               {t("experts.newExpert")}
             </button>
-            <button className={styles.toolbarBtn} onClick={openExpertLibrary}>
+            <button
+              className={styles.toolbarBtn}
+              onClick={openExpertLibrary}
+              disabled={managedEmployee}
+            >
               {t("experts.addFromLibrary")}
             </button>
           </div>
@@ -836,7 +843,14 @@ export default function ExpertsPage() {
             label: (
               <TabLabel icon={GraduationCap}>{t("experts.myExperts")}</TabLabel>
             ),
-            children: myExpertsContent,
+            children: (
+              <>
+                <ManagedAssistantsPanel />
+                {managedEmployee && ownedAgents.length === 0
+                  ? null
+                  : myExpertsContent}
+              </>
+            ),
           },
           {
             key: "teams",
@@ -864,7 +878,7 @@ export default function ExpertsPage() {
             ),
             children: marketContent,
           },
-        ]}
+        ].filter((tab) => !managedEmployee || tab.key === "my")}
       />
 
       <EditAgentDrawer

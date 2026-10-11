@@ -110,6 +110,7 @@ class UserManager:
                     display_name=row.display_name,
                     locale=normalize_locale(row.locale),
                     permissions=list(row.permissions),
+                    department_id=row.department_id,
                 )
                 self._users[row.username] = user
 
@@ -324,6 +325,7 @@ class UserManager:
                     display_name=row.display_name,
                     locale=normalize_locale(row.locale),
                     permissions=list(row.permissions),
+                    department_id=row.department_id,
                 )
                 self._users[row.username] = user
                 return user
@@ -381,6 +383,7 @@ class UserManager:
                     display_name=row.display_name,
                     locale=normalize_locale(row.locale),
                     permissions=list(row.permissions),
+                    department_id=row.department_id,
                 )
                 self._users[row.username] = cached
             return cached
@@ -423,6 +426,7 @@ class UserManager:
             display_name=row.display_name,
             locale=normalize_locale(row.locale),
             permissions=list(row.permissions),
+            department_id=row.department_id,
         )
         self._users[row.username] = user
         return user
@@ -502,6 +506,7 @@ class UserManager:
                 display_name=row.display_name,
                 locale=normalize_locale(row.locale),
                 permissions=list(row.permissions),
+                department_id=row.department_id,
             )
             self._users[row.username] = user
         self._services.audit_repo.write(actor=row.username, action="auth.login")
@@ -748,6 +753,7 @@ class UserManager:
             display_name=row.display_name,
             locale=normalize_locale(row.locale),
             permissions=list(row.permissions),
+            department_id=row.department_id,
         )
         async with self._lock:
             self._users[username] = user

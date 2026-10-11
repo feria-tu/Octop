@@ -552,6 +552,12 @@ async def patch_thread(
     conversation_mode: str | None | object = ...
     pending_plan_path: str | None | object = ...
     if "model_ref" in body.model_fields_set:
+        agent_row = server.app_runtime.agent_registry.get_row(agent_id)
+        if (
+            getattr(agent_row, "enterprise_kind", "legacy") in {"personal", "runtime"}
+            and body.model_ref
+        ):
+            raise OctopError.localized(ErrorCode.FORBIDDEN)
         model_ref = (body.model_ref or "").strip() or None
         if (
             model_ref is not None

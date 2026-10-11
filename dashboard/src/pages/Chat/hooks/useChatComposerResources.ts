@@ -61,6 +61,9 @@ export function useChatComposerResources(
   const expertDefaultMode = parseConversationMode(
     expert?.config?.conversation_mode,
   );
+  const managed =
+    expert?.enterprise_kind === "personal" ||
+    expert?.enterprise_kind === "department";
   const teamHost = isTeamAgent(expert);
   const bridgeConnectionId =
     expert?.bridge && expert.bridge_connection_id
@@ -139,7 +142,11 @@ export function useChatComposerResources(
       ? conversationOverrides[activeThreadId]
       : undefined;
     setSelectedModel(
-      local ? local.model : stickyModel || preferredModel || null,
+      managed
+        ? null
+        : local
+        ? local.model
+        : stickyModel || preferredModel || null,
     );
   }, [
     resolvedAgentId,
@@ -147,6 +154,7 @@ export function useChatComposerResources(
     stickyModel,
     preferredModel,
     conversationOverrides,
+    managed,
   ]);
 
   useEffect(() => {
@@ -200,7 +208,7 @@ export function useChatComposerResources(
   }, [isNewSession, stickyHitlPolicy, activeThreadId]);
 
   useEffect(() => {
-    if (teamHost) {
+    if (teamHost || managed) {
       setSelectedConnectors([]);
       setChatConnectors([]);
       return;
@@ -269,11 +277,12 @@ export function useChatComposerResources(
     isNewSession,
     expertMcpKey,
     teamHost,
+    managed,
     remoteBridge,
   ]);
 
   useEffect(() => {
-    if (teamHost) {
+    if (teamHost || managed) {
       setSelectedKnowledgeBaseIds([]);
       setChatKnowledgeBases(undefined);
       return;
@@ -355,6 +364,7 @@ export function useChatComposerResources(
     isNewSession,
     expertKbKey,
     teamHost,
+    managed,
     remoteBridge,
   ]);
 
@@ -424,7 +434,7 @@ export function useChatComposerResources(
 
   const handleConnectorsChange = useCallback(
     (names: string[]) => {
-      if (teamHost) {
+      if (teamHost || managed) {
         setSelectedConnectors([]);
         return;
       }
@@ -432,12 +442,12 @@ export function useChatComposerResources(
       setSelectedConnectors(names);
       if (resolvedAgentId) saveConnectors(resolvedAgentId, names);
     },
-    [resolvedAgentId, teamHost],
+    [resolvedAgentId, teamHost, managed],
   );
 
   const handleKnowledgeBaseIdsChange = useCallback(
     (ids: string[]) => {
-      if (teamHost) {
+      if (teamHost || managed) {
         setSelectedKnowledgeBaseIds([]);
         return;
       }
@@ -445,7 +455,7 @@ export function useChatComposerResources(
       setSelectedKnowledgeBaseIds(ids);
       if (resolvedAgentId) saveKnowledgeBaseIds(resolvedAgentId, ids);
     },
-    [resolvedAgentId, teamHost],
+    [resolvedAgentId, teamHost, managed],
   );
 
   const handleModelChange = useCallback(
@@ -558,7 +568,7 @@ export function useChatComposerResources(
   );
 
   return {
-    selectedModel,
+    selectedModel: managed ? null : selectedModel,
     setSelectedModel: handleModelChange,
     reasoningMode,
     reasoningEffort,

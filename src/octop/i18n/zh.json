@@ -613,7 +613,8 @@
     "ask_user_question": "向你提问",
     "generate_image": "生成图片",
     "generate_video": "生成视频",
-    "bilibili_search_anime": "搜索番剧"
+    "bilibili_search_anime": "搜索番剧",
+    "read_document": "读取文档"
   },
   "skills": {
     "pdf": "PDF 处理",

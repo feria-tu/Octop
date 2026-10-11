@@ -72,6 +72,12 @@ import {
   userRoleLabel,
   type UserRole,
 } from "../../../api/modules/userRoles";
+import {
+  enterpriseApi,
+  type Department,
+  type AssistantStatus,
+} from "../../../api/modules/enterprise";
+import EmployeeAuditDrawer from "./EmployeeAuditDrawer";
 import { authApi } from "../../../api/modules/auth";
 import { useCardTableView } from "../../../hooks/useCardTableView";
 import { useSetCurrentUser } from "../../../hooks/useCurrentUser";
@@ -99,6 +105,8 @@ import {
 const { Text } = Typography;
 
 interface UserRow {
+  department_id?: string | null;
+  assistant?: AssistantStatus | null;
   id: number;
   username: string;
   /** Role-template public id: admin | user | custom ULID. */
@@ -145,6 +153,7 @@ export interface PolicyFormValues {
 }
 
 interface CreateValues extends PolicyFormValues {
+  department_id?: string | null;
   username: string;
   display_name?: string;
   email?: string;
@@ -156,6 +165,7 @@ interface CreateValues extends PolicyFormValues {
 }
 
 interface EditValues extends PolicyFormValues {
+  department_id?: string | null;
   display_name?: string;
   email?: string;
   role: string;
@@ -1230,6 +1240,10 @@ export default function UsersListPanel() {
   const [agents, setAgents] = useState<OctopAgent[]>([]);
   const [agentsLoading, setAgentsLoading] = useState(true);
   const [rows, setRows] = useState<UserRow[]>([]);
+  const [departments, setDepartments] = useState<Department[]>([]);
+  const [departmentFilter, setDepartmentFilter] = useState<
+    string | undefined
+  >();
   const [loading, setLoading] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
   const [pendingUserAvatar, setPendingUserAvatar] = useState<File | null>(null);
@@ -1245,6 +1259,7 @@ export default function UsersListPanel() {
   const [resetForm] = Form.useForm<ResetValues>();
   const [currentUserId, setCurrentUserId] = useState<number | null>(null);
   const [actorIsAdmin, setActorIsAdmin] = useState(true);
+  const [auditTarget, setAuditTarget] = useState<UserRow | null>(null);
   const [agentDrawerUser, setAgentDrawerUser] = useState<UserRow | null>(null);
   const [editAgent, setEditAgent] = useState<OctopAgent | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -1322,8 +1337,11 @@ export default function UsersListPanel() {
 
   const filteredRows = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
-    if (!query) return rows;
-    return rows.filter((row) => {
+    const scoped = departmentFilter
+      ? rows.filter((row) => row.department_id === departmentFilter)
+      : rows;
+    if (!query) return scoped;
+    return scoped.filter((row) => {
       const username = row.username.toLowerCase();
       const displayName = (row.display_name ?? "").trim().toLowerCase();
       const email = (row.email ?? "").trim().toLowerCase();
@@ -1335,7 +1353,7 @@ export default function UsersListPanel() {
         roleName.includes(query)
       );
     });
-  }, [rows, searchQuery]);
+  }, [rows, searchQuery, departmentFilter]);
 
   const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds]);
   const selectedVisibleCount = useMemo(
@@ -1375,6 +1393,11 @@ export default function UsersListPanel() {
     try {
       const data = await request<UserRow[]>("/users");
       setRows(data);
+      try {
+        setDepartments(await enterpriseApi.departments());
+      } catch {
+        setDepartments([]);
+      }
     } catch (err) {
       message.error(
         err instanceof Error ? err.message : t("adminUsers.loadFailed"),
@@ -1631,6 +1654,7 @@ export default function UsersListPanel() {
         method: "POST",
         body: JSON.stringify({
           username: values.username,
+          department_id: values.department_id || null,
           display_name: values.display_name?.trim() || null,
           email: values.email?.trim() || null,
           password: values.password,
@@ -1686,6 +1710,7 @@ export default function UsersListPanel() {
         : [...baselinePermissions],
       role_name: userRole?.user_role_name,
       username: undefined,
+      department_id: undefined,
       display_name: undefined,
       email: undefined,
       password: undefined,
@@ -1711,6 +1736,7 @@ export default function UsersListPanel() {
         ? userRoles.find((role) => role.user_role_name === row.role_name)
         : undefined);
     editForm.setFieldsValue({
+      department_id: row.department_id,
       display_name: row.display_name ?? "",
       email: row.email ?? "",
       role: matched?.user_role_id ?? row.role,
@@ -1763,6 +1789,7 @@ export default function UsersListPanel() {
       await request(`/users/${editTarget.id}`, {
         method: "PATCH",
         body: JSON.stringify({
+          department_id: values.department_id || null,
           display_name: values.display_name?.trim() || null,
           email: values.email?.trim() || null,
           role: values.role,
@@ -1829,6 +1856,11 @@ export default function UsersListPanel() {
 
   return (
     <>
+      <EmployeeAuditDrawer
+        target={auditTarget}
+        agents={agents}
+        onClose={() => setAuditTarget(null)}
+      />
       <div className={styles.pageTop}>
         <RoleLegend />
         <div className={expertStyles.gridToolbar}>
@@ -1906,6 +1938,20 @@ export default function UsersListPanel() {
           </div>
         </div>
       </div>
+
+      {actorIsAdmin && (
+        <Select
+          allowClear
+          placeholder={t("enterprise.filterDepartment")}
+          value={departmentFilter}
+          onChange={setDepartmentFilter}
+          options={departments.map((d) => ({
+            value: d.department_id,
+            label: d.name,
+          }))}
+          style={{ minWidth: 200, marginBottom: 16 }}
+        />
+      )}
 
       {selectedIds.length > 0 ? (
         <div className={styles.batchBar} role="toolbar">
@@ -2013,6 +2059,44 @@ export default function UsersListPanel() {
               .join(" ")
           }
           columns={[
+            {
+              title: t("enterprise.department"),
+              width: 160,
+              render: (_, row) =>
+                departments.find((d) => d.department_id === row.department_id)
+                  ?.name ?? "—",
+            },
+            {
+              title: t("enterprise.myAssistant"),
+              width: 160,
+              render: (_, row) =>
+                row.assistant ? (
+                  <Space>
+                    <Tag>{t(`enterprise.status.${row.assistant.status}`)}</Tag>
+                    {row.assistant.status !== "ready" && (
+                      <Button
+                        size="small"
+                        onClick={async () => {
+                          try {
+                            await enterpriseApi.retryAssistant(row.id);
+                            await refreshAll();
+                          } catch (err) {
+                            message.error(
+                              err instanceof Error
+                                ? err.message
+                                : t("common.saveFailed"),
+                            );
+                          }
+                        }}
+                      >
+                        {t("enterprise.retry")}
+                      </Button>
+                    )}
+                  </Space>
+                ) : (
+                  "—"
+                ),
+            },
             {
               title: t("adminUsers.colUsername"),
               width: 240,
@@ -2144,6 +2228,13 @@ export default function UsersListPanel() {
               fixed: isMobile ? undefined : "right",
               render: (_, row) => (
                 <Space size={4}>
+                  {actorIsAdmin && row.department_id && (
+                    <Tooltip title={t("enterprise.audit")}>
+                      <Button size="small" onClick={() => setAuditTarget(row)}>
+                        {t("enterprise.audit")}
+                      </Button>
+                    </Tooltip>
+                  )}
                   <Tooltip title={t("common.edit")}>
                     <button
                       type="button"
@@ -2331,6 +2422,32 @@ export default function UsersListPanel() {
             >
               <Input prefix={<User {...FIELD_ICON_PROPS} />} autoFocus />
             </Form.Item>
+            {actorIsAdmin && (
+              <Form.Item
+                name="department_id"
+                label={t("enterprise.department")}
+                rules={[
+                  ({ getFieldValue }) => ({
+                    validator: async (_, value) => {
+                      if (
+                        getFieldValue("role") !== "admin" &&
+                        departments.length > 0 &&
+                        !value
+                      )
+                        throw new Error(t("enterprise.departmentRequired"));
+                    },
+                  }),
+                ]}
+              >
+                <Select
+                  allowClear
+                  options={departments.map((d) => ({
+                    value: d.department_id,
+                    label: d.name,
+                  }))}
+                />
+              </Form.Item>
+            )}
             <Form.Item
               label={t("adminUsers.formDisplayName")}
               name="display_name"
@@ -2555,6 +2672,32 @@ export default function UsersListPanel() {
                 }}
               />
             ) : null}
+            {actorIsAdmin && (
+              <Form.Item
+                name="department_id"
+                label={t("enterprise.department")}
+                rules={[
+                  ({ getFieldValue }) => ({
+                    validator: async (_, value) => {
+                      if (
+                        getFieldValue("role") !== "admin" &&
+                        departments.length > 0 &&
+                        !value
+                      )
+                        throw new Error(t("enterprise.departmentRequired"));
+                    },
+                  }),
+                ]}
+              >
+                <Select
+                  allowClear
+                  options={departments.map((d) => ({
+                    value: d.department_id,
+                    label: d.name,
+                  }))}
+                />
+              </Form.Item>
+            )}
             <Form.Item
               label={t("adminUsers.formDisplayName")}
               name="display_name"

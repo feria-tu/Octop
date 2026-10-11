@@ -64,6 +64,7 @@ class UserRow:
     permissions: builtins.list[str] = field(default_factory=list)
     role_name: str | None = None
     avatar_icon: str | None = None
+    department_id: str | None = None
 
     @classmethod
     def from_row(cls, r: DbRow) -> UserRow:
@@ -90,6 +91,7 @@ class UserRow:
             permissions=_parse_permissions(r["permissions"] if "permissions" in keys else None),
             role_name=role_name or None,
             avatar_icon=avatar_icon or None,
+            department_id=r["department_id"] if "department_id" in keys else None,
         )
 
 

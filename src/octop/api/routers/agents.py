@@ -33,6 +33,7 @@ from octop.infra.agents.settings.runtime_limits import (
     agent_runtime_values,
 )
 from octop.infra.errors import ErrorCode, OctopError
+from octop.infra.users.enterprise_access import agent_access_policy
 from octop.infra.users.permissions import user_has_permission
 
 logger = logging.getLogger(__name__)
@@ -192,6 +193,8 @@ def _row_dict(
         "is_owner": row.user_id is not None and row.user_id == viewer_user_id,
         "owner_username": owner_username,
         "kind": getattr(row, "kind", None) or "expert",
+        "enterprise_kind": getattr(row, "enterprise_kind", "legacy"),
+        "department_id": getattr(row, "department_id", None),
         **agent_runtime_values(cfg),
     }
     if payload["kind"] == "team":
@@ -203,6 +206,19 @@ def _row_dict(
             payload["member_ids"] = []
     if bootstrap_pending is not None:
         payload["bootstrap_pending"] = bootstrap_pending
+    if server is not None and viewer_user_id is not None:
+        viewer = server.user_manager.get_by_id(viewer_user_id)
+        if viewer is not None:
+            policy = agent_access_policy(row, viewer)
+            payload["allowed_actions"] = {
+                "use": policy.can_use,
+                "manage": policy.can_manage,
+                "edit_profile": policy.can_edit_profile,
+            }
+            if not policy.can_manage and payload["enterprise_kind"] != "legacy":
+                payload["config"] = {}
+                payload["mcp_servers"] = []
+                payload["skill_package_ids"] = []
     return payload
 
 
@@ -231,7 +247,9 @@ async def list_agents(
     assert server.app_runtime is not None
     registry = server.app_runtime.agent_registry
     if scope == "all":
-        rows = registry.list_rows()
+        rows = [
+            r for r in registry.list_rows() if getattr(r, "enterprise_kind", "legacy") != "runtime"
+        ]
         user_ids = {r.user_id for r in rows if r.user_id is not None}
         username_by_id: dict[int, str] = {}
         for uid in user_ids:
@@ -252,7 +270,16 @@ async def list_agents(
 
     owned = registry.list_agents(user.id)
     shared = server.services.agent_repo.list_shared(exclude_user_id=user.id)
-    rows = list({row.agent_id: row for row in [*shared, *owned]}.values())
+    departmental = [
+        r
+        for r in server.services.agent_repo.list_all(include_disabled=False)
+        if getattr(r, "enterprise_kind", "legacy") == "department"
+    ]
+    rows = [
+        r
+        for r in {row.agent_id: row for row in [*shared, *owned, *departmental]}.values()
+        if agent_access_policy(r, user).can_use
+    ]
     shared_owner_username_by_id: dict[int, str] = {}
     for row in shared:
         if row.user_id is None or row.user_id in shared_owner_username_by_id:
@@ -288,6 +315,8 @@ async def create_agent(
     from octop.infra.agents.manager import AgentCreateSpec  # noqa: PLC0415
 
     assert server.app_runtime is not None
+    if getattr(user, "department_id", None) is not None and not user.is_admin:
+        raise OctopError.localized(ErrorCode.FORBIDDEN)
     if isinstance(body.config, dict):
         assert_user_backend_root_dirs(
             user,
@@ -347,7 +376,7 @@ async def mark_agent_read(
     row = server.app_runtime.agent_registry.get_row(agent_id)
     if row is None:
         raise OctopError(ErrorCode.AGENT_NOT_FOUND, f"agent {agent_id!r} not found")
-    _assert_agent_owner(row, user)
+    assert_agent_access_row(row, user)
     server.services.session_repo.clear_unread_for_agent(agent_id, user.id)
 
 
@@ -387,7 +416,23 @@ async def patch_agent(
     row = server.app_runtime.agent_registry.get_row(agent_id)
     if row is None:
         raise OctopError(ErrorCode.AGENT_NOT_FOUND, f"agent {agent_id!r} not found")
-    _assert_agent_owner(row, user)
+    kind = getattr(row, "enterprise_kind", "legacy")
+    if kind == "department":
+        await server.enterprise.update_department_agent(
+            user, agent_id, body.model_dump(exclude_unset=True)
+        )
+        row = server.app_runtime.agent_registry.get_row(agent_id)
+        return _row_dict(row, viewer_user_id=user.id, server=server)
+    if kind == "personal":
+        from octop.infra.users.enterprise import PERSONAL_PROFILE_FIELDS
+
+        if not agent_access_policy(row, user).can_edit_profile or body.model_fields_set - (
+            PERSONAL_PROFILE_FIELDS
+            | ({"default_model", "knowledge_base_ids"} if user.is_admin else set())
+        ):
+            raise OctopError.localized(ErrorCode.FORBIDDEN)
+    else:
+        _assert_agent_owner(row, user)
     if body.config is not None and isinstance(body.config, dict):
         assert_user_backend_root_dirs(
             user,
@@ -455,6 +500,9 @@ async def delete_agent(
     if row is None:
         raise OctopError(ErrorCode.AGENT_NOT_FOUND, f"agent {agent_id!r} not found")
     _assert_agent_owner(row, user)
+    if getattr(row, "enterprise_kind", "legacy") == "department":
+        await server.enterprise.delete_department_agent(user, agent_id)
+        return
     await server.app_runtime.agent_registry.delete(agent_id)
 
 
@@ -527,6 +575,9 @@ async def start_agent(
     if row is None:
         raise OctopError(ErrorCode.AGENT_NOT_FOUND, f"agent {agent_id!r} not found")
     _assert_agent_owner(row, user)
+    if getattr(row, "enterprise_kind", "legacy") == "department":
+        await server.enterprise.update_department_agent(user, agent_id, {"enabled": True})
+        return
     await server.app_runtime.agent_registry.start(agent_id)
 
 
@@ -542,6 +593,9 @@ async def stop_agent(
     if row is None:
         raise OctopError(ErrorCode.AGENT_NOT_FOUND, f"agent {agent_id!r} not found")
     _assert_agent_owner(row, user)
+    if getattr(row, "enterprise_kind", "legacy") == "department":
+        await server.enterprise.update_department_agent(user, agent_id, {"enabled": False})
+        return
     await server.app_runtime.agent_registry.stop(agent_id)
 
 
@@ -557,6 +611,9 @@ async def reload_agent(
     if row is None:
         raise OctopError(ErrorCode.AGENT_NOT_FOUND, f"agent {agent_id!r} not found")
     _assert_agent_owner(row, user)
+    if getattr(row, "enterprise_kind", "legacy") == "department":
+        await server.enterprise.update_department_agent(user, agent_id, {})
+        return
     await server.app_runtime.agent_registry.reload(agent_id)
 
 
@@ -571,7 +628,7 @@ async def agent_status(
     row = server.app_runtime.agent_registry.get_row(agent_id)
     if row is None:
         raise OctopError(ErrorCode.AGENT_NOT_FOUND, f"agent {agent_id!r} not found")
-    _assert_agent_owner(row, user)
+    assert_agent_access_row(row, user)
     channels = server.app_runtime.gateway.list_channels(agent_id)
     cron_jobs = server.app_runtime.cron_manager.list_by_agent(agent_id)
     return {

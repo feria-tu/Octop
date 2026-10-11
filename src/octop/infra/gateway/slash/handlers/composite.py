@@ -300,6 +300,20 @@ async def cmd_model(d: SlashDispatcher, cmd: SlashCommand, ctx: SlashCtx, sink: 
     lang = lang_of(ctx)
     tid = await ensure_thread_id(ctx)
     name = cmd.args.strip()
+    managed_row = (
+        ctx.agent_manager.get_row(ctx.agent_id)
+        if ctx.agent_manager is not None
+        else (ctx.agent_repo.get(ctx.agent_id) if ctx.agent_repo is not None else None)
+    )
+    if name and getattr(managed_row, "enterprise_kind", "legacy") in {
+        "personal",
+        "runtime",
+        "department",
+    }:
+        from octop.i18n.domains.errors import error_message
+
+        await sink.text(error_message("FORBIDDEN", lang))
+        return
     if not name:
         override = d.get_thread_model_override(ctx, tid)
         default_model: str | None = None

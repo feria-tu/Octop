@@ -1903,9 +1903,68 @@ def _apply_sqlite_migration(db: DatabasePool, version: int, path: Path) -> None:
         with db.connect() as conn:
             conn.execute("UPDATE _schema_version SET version = ?", (version,))
         return
+    if version == 21:
+        _ensure_sqlite_enterprise_schema(db)
+        with db.connect() as conn:
+            conn.execute("UPDATE _schema_version SET version = ?", (version,))
+        return
     sql = path.read_text(encoding="utf-8")
     with db.connect() as conn:
         conn.executescript(sql)
+
+
+def _ensure_sqlite_enterprise_schema(db: DatabasePool) -> None:
+    """Apply v21 idempotently, including legacy databases without agents."""
+    with db.connect() as conn:
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS departments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                department_id TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL UNIQUE,
+                created_at INTEGER NOT NULL
+            )"""
+        )
+    has_users = _table_exists(db, "users")
+    has_agents = _table_exists(db, "agents")
+    if has_users:
+        _ensure_column(db, "users", "department_id", "TEXT REFERENCES departments(department_id)")
+        with db.connect() as conn:
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_users_department ON users(department_id)")
+    if has_agents:
+        _ensure_column(
+            db,
+            "agents",
+            "enterprise_kind",
+            "TEXT NOT NULL DEFAULT 'legacy' "
+            "CHECK (enterprise_kind IN ('legacy', 'personal', 'department', 'runtime'))",
+        )
+        _ensure_column(db, "agents", "department_id", "TEXT REFERENCES departments(department_id)")
+        _ensure_column(db, "agents", "definition_version", "INTEGER NOT NULL DEFAULT 1")
+        with db.connect() as conn:
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_agents_department "
+                "ON agents(department_id, enterprise_kind)"
+            )
+    if not has_users or not has_agents:
+        return
+    with db.connect() as conn:
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS employee_assistants (
+                user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+                agent_id TEXT UNIQUE REFERENCES agents(agent_id) ON DELETE SET NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                error TEXT
+            )"""
+        )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS department_runtimes (
+                definition_id TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE CASCADE,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                runtime_id TEXT NOT NULL UNIQUE REFERENCES agents(agent_id) ON DELETE CASCADE,
+                definition_version INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY(definition_id, user_id)
+            )"""
+        )
 
 
 def run_migrations(db: DatabasePool) -> None:
@@ -1960,3 +2019,5 @@ def run_migrations(db: DatabasePool) -> None:
     _ensure_sso_provider_kind_schema(db)
     _ensure_user_role_schema(db)
     _ensure_bridge_connections_schema(db)
+    if db.dialect == "sqlite":
+        _ensure_sqlite_enterprise_schema(db)

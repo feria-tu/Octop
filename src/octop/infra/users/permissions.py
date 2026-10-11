@@ -231,6 +231,8 @@ def user_has_permission(user: PermissionUser, key: str) -> bool:
         return False
     if user.is_admin:
         return True
+    if getattr(user, "department_id", None) is not None:
+        return False
     return key in (user.permissions or [])
 
 
@@ -252,4 +254,6 @@ def effective_permissions(user: PermissionUser) -> list[str]:
     """Permissions to expose on ``/auth/me`` / login (admin gets the full catalog)."""
     if user.is_admin:
         return sorted(ALL_PERMISSION_KEYS)
+    if getattr(user, "department_id", None) is not None:
+        return []
     return list(user.permissions or [])

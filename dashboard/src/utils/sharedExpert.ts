@@ -1,6 +1,7 @@
 import { isTeamAgent } from "./teamAgent";
 
 export interface SharedExpertAccess {
+  allowed_actions?: { use: boolean; manage: boolean; edit_profile: boolean };
   is_shared?: boolean;
   is_owner?: boolean;
 }
@@ -11,6 +12,7 @@ export function isSharedExpertViewer(agent: SharedExpertAccess): boolean {
 
 /** True when the current user may manage this expert (not a share-only viewer). */
 export function isOwnedExpert(agent: SharedExpertAccess): boolean {
+  if (agent.allowed_actions) return agent.allowed_actions.manage;
   return !isSharedExpertViewer(agent);
 }
 

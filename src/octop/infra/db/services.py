@@ -14,6 +14,7 @@ from octop.infra.db.repos.care_push import CarePushRepo
 from octop.infra.db.repos.channels import ChannelRepo
 from octop.infra.db.repos.connectors import ConnectorRepo
 from octop.infra.db.repos.cron import CronJobRepo
+from octop.infra.db.repos.enterprise import EnterpriseRepo
 from octop.infra.db.repos.invites import InviteRepo
 from octop.infra.db.repos.knowledge import KnowledgeRepo
 from octop.infra.db.repos.proactive_care_config import ProactiveCareConfigRepo
@@ -64,6 +65,10 @@ class RepoBundle:
     proactive_care_config_repo: ProactiveCareConfigRepo
     sso_repo: SsoRepo
 
+    @property
+    def enterprise_repo(self) -> EnterpriseRepo:
+        return EnterpriseRepo(self.db)
+
     @classmethod
     def from_pool(cls, db: DatabasePool) -> RepoBundle:
         return cls(
@@ -105,6 +110,10 @@ class SharedServices:
     @property
     def db(self) -> DatabasePool:
         return self.repos.db
+
+    @property
+    def enterprise_repo(self) -> EnterpriseRepo:
+        return self.repos.enterprise_repo
 
     @property
     def user_repo(self) -> UserRepo:

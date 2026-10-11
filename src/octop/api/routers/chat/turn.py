@@ -232,6 +232,26 @@ async def prepare_dashboard_turn(
 ) -> PreparedDashboardTurn:
     """Validate MCP/skills, resolve thread, return data for gateway enqueue."""
     row = require_agent_row(agent_id, user=user, as_user=None, server=server)
+    if getattr(row, "enterprise_kind", "legacy") in {"personal", "runtime"}:
+        from octop.infra.agents.settings.profile import parse_id_list_json
+
+        allowed_model = (
+            row.default_model or server.app_runtime.agent_registry.resolve_fallback_model_ref()
+        )
+        if (
+            turn.mcp_servers
+            or turn.skills
+            or turn.target_agent_ids
+            or (turn.default_model and turn.default_model != allowed_model)
+        ):
+            raise OctopError.localized(ErrorCode.FORBIDDEN)
+        turn.default_model = None
+        assigned_ids = parse_id_list_json(row.knowledge_base_ids) or []
+        if turn.knowledge_base_ids is not None and set(turn.knowledge_base_ids) - set(assigned_ids):
+            raise OctopError.localized(ErrorCode.FORBIDDEN)
+        turn.mcp_servers = []
+        turn.skills = []
+        turn.knowledge_base_ids = assigned_ids
     default_model = (row.default_model or "").strip() or None
 
     mcp_servers = await validate_chat_mcp_servers(server, user_id=user.id, names=turn.mcp_servers)

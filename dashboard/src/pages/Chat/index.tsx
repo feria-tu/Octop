@@ -207,6 +207,9 @@ function ChatPageInner() {
   const agentChatReady = isAgentChatReady(activeAgent?.state, activeAgent);
   const trajectoryEnabled =
     activeAgent !== null && activeAgent.config?.enable_trajectory !== false;
+  const managedAssistant =
+    activeAgent?.enterprise_kind === "personal" ||
+    activeAgent?.enterprise_kind === "department";
   const sharedExpertViewer = isSharedExpertViewer(activeAgent ?? {});
   const isTeamChat = isTeamAgent(activeAgent);
   const [agentProfileOpen, setAgentProfileOpen] = useState(false);
@@ -248,10 +251,13 @@ function ChatPageInner() {
     visible: memoryMaintVisible,
     blocking: memoryMaintBlocking,
     connectionLost: memoryMaintConnectionLost,
-  } = useMemoryMaintenance(resolvedAgentId, agentChatReady && !noAgents);
+  } = useMemoryMaintenance(
+    resolvedAgentId,
+    agentChatReady && !noAgents && !managedAssistant,
+  );
   const historyMigration = useHistoryMigration(
     resolvedAgentId,
-    agentChatReady && !noAgents && !sharedExpertViewer,
+    agentChatReady && !noAgents && !sharedExpertViewer && !managedAssistant,
   );
 
   useEffect(() => {
@@ -261,10 +267,18 @@ function ChatPageInner() {
   const { quickCards: expertQuickCards, welcomeSuffix } =
     useExpertChatWelcome(activeAgent);
   const { skills: chatSkills } = useSkills(
-    chatSkillCatalogAgentId(resolvedAgentId, agentChatReady, agentsLoading),
+    chatSkillCatalogAgentId(
+      managedAssistant ? null : resolvedAgentId,
+      agentChatReady,
+      agentsLoading,
+    ),
   );
   const chatSubagents = useChatSubagents(
-    chatSkillCatalogAgentId(resolvedAgentId, agentChatReady, agentsLoading),
+    chatSkillCatalogAgentId(
+      managedAssistant ? null : resolvedAgentId,
+      agentChatReady,
+      agentsLoading,
+    ),
   );
   const [trajectoryDrawerOpen, setTrajectoryDrawerOpen] = useState(false);
   const [turnRailVisible, setTurnRailVisible] = useState(false);
@@ -490,7 +504,7 @@ function ChatPageInner() {
     const handlers: ChatDockAddTabHandlers = {
       onOpenBrowser: handleOpenBrowserTab,
     };
-    if (!sharedExpertViewer) {
+    if (!sharedExpertViewer && !managedAssistant) {
       handlers.onOpenWorkspace = openWorkspaceTab;
       handlers.workspaceDisabled = !agentChatReady;
       handlers.workspaceDisabledHint = t("workspace.requiresRunning");
@@ -508,6 +522,7 @@ function ChatPageInner() {
     openTerminalTab,
     openWorkspaceTab,
     sharedExpertViewer,
+    managedAssistant,
     t,
   ]);
 
@@ -1702,9 +1717,9 @@ function ChatPageInner() {
               onComposerCleared={() => {
                 prefillInputRef.current = "";
               }}
-              availableModels={availableModels}
+              availableModels={managedAssistant ? undefined : availableModels}
               selectedModel={selectedModel}
-              onModelChange={setSelectedModel}
+              onModelChange={managedAssistant ? undefined : setSelectedModel}
               reasoningMode={reasoningMode}
               reasoningEffort={reasoningEffort}
               onReasoningChange={handleReasoningChange}
@@ -1714,13 +1729,15 @@ function ChatPageInner() {
               onHitlPolicyChange={
                 hitlEnabled ? handleComposerHitlPolicyChange : undefined
               }
-              availableConnectors={isTeamChat ? undefined : chatConnectors}
+              availableConnectors={
+                isTeamChat || managedAssistant ? undefined : chatConnectors
+              }
               selectedConnectors={isTeamChat ? [] : selectedConnectors}
               onConnectorsChange={
                 isTeamChat ? undefined : handleConnectorsChange
               }
               availableKnowledgeBases={
-                isTeamChat ? undefined : chatKnowledgeBases
+                isTeamChat || managedAssistant ? undefined : chatKnowledgeBases
               }
               selectedKnowledgeBaseIds={
                 isTeamChat ? [] : selectedKnowledgeBaseIds
@@ -1728,12 +1745,20 @@ function ChatPageInner() {
               onKnowledgeBaseIdsChange={
                 isTeamChat ? undefined : handleKnowledgeBaseIdsChange
               }
-              availableSkills={isTeamChat ? undefined : chatSkills}
+              availableSkills={
+                isTeamChat || managedAssistant ? undefined : chatSkills
+              }
               availableAgents={chatAgentOptions}
               availableExperts={
-                isTeamChat ? teamExpertOptions : chatAgentOptionsPickable
+                managedAssistant
+                  ? undefined
+                  : isTeamChat
+                  ? teamExpertOptions
+                  : chatAgentOptionsPickable
               }
-              availableSubagents={isTeamChat ? undefined : chatSubagents}
+              availableSubagents={
+                isTeamChat || managedAssistant ? undefined : chatSubagents
+              }
               agentId={resolvedAgentId}
               threadId={activeThreadId}
               defaultModel={activeAgent?.default_model ?? null}

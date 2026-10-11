@@ -21,6 +21,7 @@ class User:
     display_name: str | None
     locale: str = "zh"
     permissions: list[str] = field(default_factory=list)
+    department_id: str | None = None
 
     @property
     def label(self) -> str:

@@ -34,6 +34,25 @@ def require_running_agent(server: Any, agent_id: str) -> HarnessAgent:
     return cast("HarnessAgent", server.app_runtime.agent_registry.get_agent(agent_id))
 
 
+async def _audit_managed_read(server: Any, row: Any, user: Any, as_user: int | None) -> None:
+    if user.is_admin and getattr(row, "enterprise_kind", "legacy") != "legacy":
+        await server.enterprise.audit(
+            user, "assistant.audit.workspace", row.agent_id, str(as_user or row.user_id or user.id)
+        )
+
+
+async def private_content_path(
+    server: Any, agent_id: str, workspace: BackendWorkspace, path: str
+) -> str:
+    from octop.infra.agents.workspace.enterprise import managed_content_path
+    from octop.infra.users.enterprise import db_call
+
+    row = await db_call(server.services.agent_repo.get, agent_id)
+    if getattr(row, "enterprise_kind", "legacy") != "legacy":
+        return await db_call(managed_content_path, workspace.workspace_dir, path)
+    return path
+
+
 async def require_running_workspace(
     agent_id: str,
     *,
@@ -53,6 +72,7 @@ async def require_running_workspace(
     """
     checker = require_agent_owner_row if owner_only else require_agent_row
     row = checker(agent_id, user=user, as_user=as_user, server=server)
+    await _audit_managed_read(server, row, user, as_user)
     try:
         return require_running_agent(server, agent_id).workspace
     except OctopError as exc:
@@ -83,7 +103,8 @@ async def require_agent_workspace(
     artifact preview/download after a team member has finished a turn.
     """
     checker = require_agent_owner_row if owner_only else require_agent_row
-    checker(agent_id, user=user, as_user=as_user, server=server)
+    row = checker(agent_id, user=user, as_user=as_user, server=server)
+    await _audit_managed_read(server, row, user, as_user)
     assert server.app_runtime is not None
     workspace = server.app_runtime.agent_registry.workspace_for_agent(agent_id)
     if workspace is None:

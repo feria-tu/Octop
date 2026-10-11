@@ -1720,7 +1720,8 @@
     "ask_user_question": "向你提问",
     "generate_image": "生成图片",
     "generate_video": "生成视频",
-    "bilibili_search_anime": "搜索番剧"
+    "bilibili_search_anime": "搜索番剧",
+    "read_document": "读取文档"
   },
   "toolSettings": {
     "title": "工具设置",
@@ -6484,5 +6485,50 @@
     "step4Desc": "操作完成后，输入\"结束\"停止录制，确认后技能将以任务目标为名保存。之后只需输入任务目标关键词即可触发回放。",
     "envNotReady": "请先安装浏览器环境",
     "title": "技能录制引导"
+  },
+  "enterprise": {
+    "loadFailed": "加载失败",
+    "description": "简介",
+    "name": "名称",
+    "autoModel": "使用公司默认模型",
+    "avatar": "头像",
+    "audit": "查看员工会话",
+    "auditHint": "仅供审查。每次查看都会记录到审计日志。",
+    "selectAssistant": "选择助手",
+    "selectConversation": "选择会话",
+    "emptyAudit": "暂无可查看的会话",
+    "moreHistory": "加载更早的消息",
+
+    "departments": "部门管理",
+    "department": "部门",
+    "newDepartment": "新建部门",
+    "departmentHint": "每名员工属于一个部门，自动获得本部门已发布助手的使用权限。",
+    "deleteDepartmentHint": "确认删除空部门？请先转移员工并删除部门助手。",
+    "personalDefaults": "个人助手默认配置",
+    "defaultsHint": "开户后自动创建个人助手。这些默认设置只应用于新助手。员工可修改名称和人设。",
+    "defaultNameHint": "留空时使用员工姓名",
+    "model": "模型",
+    "persona": "人设与回复偏好",
+    "departmentAgents": "部门助手",
+    "newAgent": "新建部门助手",
+    "agentHint": "管理员统一配置，员工的聊天、附件和记忆分别保存。新建后需要发布。支持对话、知识库和文档处理。",
+    "published": "已发布",
+    "deleteAgentHint": "确认删除部门助手及所有员工运行数据？此操作不可撤销。",
+    "knowledgeBases": "只读知识库",
+    "knowledgeHint": "选择此助手可以查询的知识库",
+    "myAssistant": "我的助手",
+    "chat": "开始聊天",
+    "filterDepartment": "按部门筛选",
+    "departmentRequired": "请选择员工所属部门",
+    "retry": "重试初始化",
+    "audit": "审计查看",
+    "auditHint": "只读查看员工会话，所有查看操作都会记录。",
+    "chooseAssistant": "选择助手",
+    "chooseThread": "选择会话",
+    "status": {
+      "pending": "初始化中",
+      "ready": "可使用",
+      "failed": "初始化失败"
+    }
   }
 }

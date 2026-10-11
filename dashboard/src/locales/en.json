@@ -1720,7 +1720,8 @@
     "ask_user_question": "Ask the user",
     "generate_image": "Generate image",
     "generate_video": "Generate video",
-    "bilibili_search_anime": "Search Bilibili anime"
+    "bilibili_search_anime": "Search Bilibili anime",
+    "read_document": "Read document"
   },
   "toolSettings": {
     "title": "Tool settings",
@@ -6484,5 +6485,50 @@
     "step4Desc": "When finished, type \"结束\" (or \"end\") to stop; after confirmation the skill is saved under the task goal. Type the goal keyword later to replay it.",
     "envNotReady": "Browser environment required first",
     "title": "Skill recording guide"
+  },
+  "enterprise": {
+    "loadFailed": "Unable to load data",
+    "description": "Description",
+    "name": "Name",
+    "autoModel": "Use company default model",
+    "avatar": "Avatar",
+    "audit": "Review employee conversations",
+    "auditHint": "Read-only access. Every view is recorded in the audit log.",
+    "selectAssistant": "Select an assistant",
+    "selectConversation": "Select a conversation",
+    "emptyAudit": "No conversations available",
+    "moreHistory": "Load earlier messages",
+
+    "departments": "Departments",
+    "department": "Department",
+    "newDepartment": "New department",
+    "departmentHint": "Each employee belongs to one department and can use its published assistants.",
+    "deleteDepartmentHint": "Delete this empty department? Move employees and delete its agents first.",
+    "personalDefaults": "Personal assistant defaults",
+    "defaultsHint": "A personal assistant is created when an employee account is provisioned. These defaults apply to new assistants. Employees can edit their name and persona.",
+    "defaultNameHint": "Leave blank to use the employee name",
+    "model": "Model",
+    "persona": "Persona and response preferences",
+    "departmentAgents": "Department assistants",
+    "newAgent": "New department assistant",
+    "agentHint": "Centrally configured assistants with separate conversations, attachments and memory for each employee. Publish after creation. Supports chat, knowledge search and document processing.",
+    "published": "Published",
+    "deleteAgentHint": "Delete this department assistant and all employee runtime data? This cannot be undone.",
+    "knowledgeBases": "Read-only knowledge bases",
+    "knowledgeHint": "Select knowledge bases available to this assistant",
+    "myAssistant": "My assistant",
+    "chat": "Start chat",
+    "filterDepartment": "Filter by department",
+    "departmentRequired": "Select the employee department",
+    "retry": "Retry initialization",
+    "audit": "Audit view",
+    "auditHint": "Read-only employee conversations. Every view is recorded.",
+    "chooseAssistant": "Select an assistant",
+    "chooseThread": "Select a conversation",
+    "status": {
+      "pending": "Initializing",
+      "ready": "Ready",
+      "failed": "Initialization failed"
+    }
   }
 }

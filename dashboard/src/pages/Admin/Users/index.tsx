@@ -6,6 +6,7 @@ import TabBar, { type TabBarItem } from "../../../components/TabLabel/TabBar";
 import { TAB_ICON_SIZE } from "../../../components/TabLabel";
 import { TabPanelHeader } from "../../Settings/AdvancedSettings/TabPanelHeader";
 import RolesPanel from "./RolesPanel";
+import DepartmentsPanel from "./DepartmentsPanel";
 import UsersListPanel from "./UsersListPanel";
 import SsoPanel from "./SsoPanel";
 import LdapPanel from "./LdapPanel";
@@ -20,7 +21,13 @@ import dingtalkIcon from "../../../assets/channels/dingtalk.svg";
 import openidIcon from "../../../assets/providers/openid.svg";
 import styles from "./index.module.less";
 
-type TabKey = "local" | "roles" | OauthAppKind | "oidc" | "ldap";
+type TabKey =
+  | "local"
+  | "roles"
+  | "departments"
+  | OauthAppKind
+  | "oidc"
+  | "ldap";
 
 const OAUTH_BRAND_ICONS: Record<OauthAppKind, string> = {
   feishu: feishuIcon,
@@ -41,6 +48,7 @@ function BrandTabIcon({
 const TABS: TabBarItem<TabKey>[] = [
   { key: "local", labelKey: "adminUsers.tabLocal", icon: Users },
   { key: "roles", labelKey: "adminUsers.tabRoles", icon: IdCard },
+  { key: "departments", labelKey: "enterprise.departments", icon: Network },
   {
     key: "feishu",
     labelKey: "adminUsers.tabFeishu",
@@ -70,6 +78,7 @@ const TABS: TabBarItem<TabKey>[] = [
 
 function parseTab(raw: string | null): TabKey {
   if (raw === "roles") return "roles";
+  if (raw === "departments") return "departments";
   if (
     raw === "feishu" ||
     raw === "wecom" ||
@@ -116,6 +125,7 @@ export default function AdminUsersPage() {
   if (forbidden) return <ForbiddenPage />;
 
   let body: ReactNode = <UsersListPanel />;
+  if (activeTab === "departments") body = <DepartmentsPanel />;
   if (activeTab === "roles") {
     body = <RolesPanel />;
   } else if (activeTab === "oidc") {

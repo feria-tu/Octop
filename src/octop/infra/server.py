@@ -245,6 +245,16 @@ class AppRuntime:
 
 
 class OctopServer:
+    @property
+    def enterprise(self) -> Any:
+        from octop.infra.users.enterprise import EnterpriseService
+
+        service = getattr(self, "_enterprise_service", None)
+        if service is None:
+            service = EnterpriseService(self)
+            self._enterprise_service = service
+        return service
+
     def __init__(self, home: Path | None = None) -> None:
         self._home = home or PathLayout.from_env().root
         self.paths = PathLayout(self._home)

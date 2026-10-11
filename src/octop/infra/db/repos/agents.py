@@ -47,6 +47,9 @@ class AgentRow:
     knowledge_base_ids: str | None = None
     mcp_servers: str | None = None
     kind: str = "expert"
+    enterprise_kind: str = "legacy"
+    department_id: str | None = None
+    definition_version: int = 1
 
     @classmethod
     def from_row(cls, r: DbRow) -> AgentRow:
@@ -88,6 +91,9 @@ class AgentRow:
             knowledge_base_ids=_opt_str(r, "knowledge_base_ids"),
             mcp_servers=_opt_str(r, "mcp_servers"),
             kind=kind,
+            enterprise_kind=_opt_str(r, "enterprise_kind") or "legacy",
+            department_id=_opt_str(r, "department_id"),
+            definition_version=int(_opt_str(r, "definition_version") or 1),
         )
 
 

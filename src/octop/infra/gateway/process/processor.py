@@ -530,6 +530,18 @@ class GlobalProcessor:
         - When a model is passed and the turn needs vision, upgrade to a vision ref.
         """
         providers = self._agent_manager.providers
+        managed_row = self._agent_repo.get(agent_id)
+        if managed_row is not None and getattr(managed_row, "enterprise_kind", "legacy") in {
+            "personal",
+            "runtime",
+            "department",
+        }:
+            return (
+                providers.resolve_explicit_default_model(
+                    managed_row, self._agent_manager.get_config(agent_id)
+                )
+                or self._agent_manager.resolve_fallback_model_ref()
+            )
         thread_model = self._agent_manager.get_thread_model(agent_id, thread_id)
         thread_row = self._thread_registry.get_thread(thread_id)
         model_ref = self._model_ref_from_meta(
@@ -604,6 +616,30 @@ class GlobalProcessor:
         )
         return reasoning_request_parameters(capability, mode=mode, effort=effort)
 
+    async def _enterprise_message_allowed(
+        self, msg: InboundMessage, row: Any, user_id: int
+    ) -> bool:
+        kind = getattr(row, "enterprise_kind", "legacy")
+        if not isinstance(kind, str) or kind == "legacy":
+            return True
+        from octop.infra.users.enterprise import db_call
+
+        if msg.channel_type != "dashboard" or row.enterprise_kind == "department":
+            return False
+        user = await db_call(self._user_repo.get, user_id)
+        if user is None or user.disabled:
+            return False
+        if row.enterprise_kind == "personal":
+            return row.user_id == user_id or user.role == "admin"
+        records = await db_call(
+            self._agent_manager._repos.enterprise_repo.runtimes, user_id=user_id
+        )
+        record = next((r for r in records if r.runtime_id == row.agent_id), None)
+        definition = await db_call(self._agent_repo.get, record.definition_id) if record else None
+        return bool(
+            definition and definition.enabled and user.department_id == definition.department_id
+        )
+
     # -- IM channel entry (MessageEvent stream) --------------------------------
 
     async def __call__(self, msg: InboundMessage) -> AsyncIterator[MessageEvent]:
@@ -622,6 +658,12 @@ class GlobalProcessor:
             msg,
             agent_owner_id=agent_row.user_id if agent_row is not None else None,
         )
+        if not await self._enterprise_message_allowed(msg, agent_row, user_id):
+            from octop.infra.errors import ErrorCode, OctopError
+
+            yield MessageEvent.error_event(OctopError.localized(ErrorCode.FORBIDDEN).message)
+            yield MessageEvent.completed()
+            return
         session_key = session_key_from_message(msg, agent_id=agent_id)
         channel_type = msg.channel_type or "unknown"
         im_meta = sanitize_im_metadata(msg)
@@ -921,6 +963,12 @@ class GlobalProcessor:
             msg,
             agent_owner_id=agent_row.user_id if agent_row is not None else None,
         )
+        if not await self._enterprise_message_allowed(msg, agent_row, user_id):
+            from octop.infra.errors import ErrorCode, OctopError
+
+            yield {"type": "error", **OctopError.localized(ErrorCode.FORBIDDEN).to_envelope()}
+            yield {"type": "done"}
+            return
         session_key = session_key_from_message(msg, agent_id=agent_id)
         channel_type = msg.channel_type or "unknown"
         im_meta = sanitize_im_metadata(msg)

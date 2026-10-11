@@ -322,6 +322,9 @@ class AgentCreateSpec:
     config: dict[str, Any] = field(default_factory=dict)
     kind: str = "expert"
     member_ids: list[str] = field(default_factory=list)
+    enterprise_kind: str = "legacy"
+    enabled: bool = True
+    department_id: str | None = None
 
 
 def _sanitize_bound_mcp_tools(agent: Any) -> None:
@@ -703,6 +706,12 @@ class AgentManager:
                 mcp_servers=mcp_servers_json,
                 kind=spec.kind if spec.kind in {"expert", "team"} else "expert",
             )
+            if spec.enterprise_kind != "legacy":
+                self._repos.enterprise_repo.mark_agent(
+                    agent_id, spec.enterprise_kind, spec.department_id
+                )
+            if not spec.enabled:
+                self._repos.agent_repo.set_enabled(agent_id, False)
             row = self._repos.agent_repo.get(agent_id)
             assert row is not None
             if spec.is_shared:
@@ -1301,6 +1310,7 @@ class AgentManager:
             self._track_invocation(agent_id),
         ):
             self._apply_pending_bootstrap_graph_refresh(agent_id)
+            request = await self._prepare_enterprise_request(agent_id, request)
             req = self._prepare_stream_request(agent_id, request)
             with hitl_thread_scope(thread_id_from_request(req)):
                 async for chunk in self._harness_manager.stream(agent_id, cast(Any, req)):
@@ -1313,6 +1323,7 @@ class AgentManager:
             raise self._unavailable_error(agent_id)
         async with self._track_invocation(agent_id):
             self._apply_pending_bootstrap_graph_refresh(agent_id)
+            request = await self._prepare_enterprise_request(agent_id, request)
             req = self._prepare_stream_request(agent_id, request)
             with hitl_thread_scope(thread_id_from_request(req)):
                 result = await self._harness_manager.call(agent_id, cast(Any, req))
@@ -3048,6 +3059,65 @@ class AgentManager:
             return connector_user_id
         return row.user_id
 
+    async def _prepare_enterprise_request(
+        self, agent_id: str, request: dict[str, Any]
+    ) -> dict[str, Any]:
+        from octop.infra.agents.settings.profile import parse_id_list_json
+        from octop.infra.knowledge.hint import catalog_for_selected_bases
+        from octop.infra.users.enterprise import db_call
+
+        row = await db_call(self._repos.agent_repo.get, agent_id)
+        if (
+            row is None
+            or not isinstance(row.enterprise_kind, str)
+            or row.enterprise_kind == "legacy"
+        ):
+            return request
+        configurable = dict(request.get("configurable") or {})
+        raw_uid = request.get("user") or configurable.get("user")
+        user = (
+            await db_call(self._repos.user_repo.get, int(raw_uid)) if raw_uid is not None else None
+        )
+        if row.enterprise_kind == "department" or user is None or user.disabled:
+            raise OctopError.localized(ErrorCode.FORBIDDEN)
+        if row.enterprise_kind == "personal" and row.user_id != user.id and user.role != "admin":
+            raise OctopError.localized(ErrorCode.FORBIDDEN)
+        if row.enterprise_kind == "runtime":
+            records = await db_call(self._repos.enterprise_repo.runtimes, user_id=user.id)
+            record = next((r for r in records if r.runtime_id == agent_id), None)
+            definition = (
+                await db_call(self._repos.agent_repo.get, record.definition_id) if record else None
+            )
+            if (
+                record is None
+                or definition is None
+                or not definition.enabled
+                or user.department_id != definition.department_id
+                or record.definition_version != definition.definition_version
+            ):
+                raise OctopError.localized(ErrorCode.FORBIDDEN)
+        ids = parse_id_list_json(row.knowledge_base_ids) or []
+        bases = [
+            base
+            for kb_id in ids
+            if (base := await db_call(self._repos.knowledge_repo.get_base, kb_id)) is not None
+        ]
+        configurable.update(
+            user=str(user.id),
+            mcp_servers=[],
+            skills=[],
+            target_agent_ids=[],
+            knowledge_base_ids=ids,
+            knowledge_base_catalog=catalog_for_selected_bases(bases, ids),
+        )
+        managed = dict(request)
+        managed["configurable"] = configurable
+        # Existing composer preferences must never override a managed model.
+        model = row.default_model or self.resolve_fallback_model_ref()
+        if model:
+            managed["model"] = model
+        return managed
+
     def _prepare_stream_request(self, agent_id: str, request: dict[str, Any]) -> dict[str, Any]:
         from octop_harness.plugins import collect_plugin_tool_configs  # noqa: PLC0415
 
@@ -3387,6 +3457,36 @@ class AgentManager:
             **_memory_extract_settings(cfg, is_ref_usable=self._providers.is_model_ref_usable),
             **_resolve_memory_backend_kwargs(cfg, workspace_dir=workspace_dir, config=self._config),
         )
+        if row.enterprise_kind in {"personal", "runtime", "department"}:
+            from octop.infra.agents.middleware.enterprise import (
+                EnterpriseToolPolicyMiddleware,
+                build_document_tool,
+            )
+            from octop.infra.agents.settings.profile import parse_id_list_json
+            from octop.infra.users.enterprise import SAFE_TOOLS
+
+            managed_knowledge_tools = build_knowledge_tools(
+                SimpleNamespace(
+                    knowledge_repo=self._repos.knowledge_repo,
+                    settings_repo=self._repos.settings_repo,
+                    provider_repo=self._repos.provider_repo,
+                ),
+                granted_base_ids=parse_id_list_json(row.knowledge_base_ids) or [],
+            )
+
+            harness_cfg.mcp_server_configs = {}
+            harness_cfg.acp_runners = {}
+            harness_cfg.acp_delegate_enabled = False
+            harness_cfg.subagents = []
+            harness_cfg.subagents_auto_load = False
+            harness_cfg.bootstrap_enabled = False
+            harness_cfg.skills_dir = None
+            harness_cfg.tools = [*managed_knowledge_tools, build_document_tool(ws)]
+            harness_cfg.middleware = [
+                EnterpriseToolPolicyMiddleware(self._repos, row.agent_id, ws),
+                *[m for m in agent_middleware if m not in plugin_middleware],
+            ]
+            effective_plugins = dict.fromkeys(effective_plugins, False)
         if "tools_disabled" in _HARNESS_AGENT_CONFIG_FIELDS:
             from octop.infra.agents.settings.tool_catalog import effective_tools_disabled
             from octop.infra.agents.teams import host_tools_disabled
@@ -3399,6 +3499,12 @@ class AgentManager:
             if team_host:
                 disabled = set(host_tools_disabled(disabled))
             harness_cfg.tools_disabled = frozenset(disabled)
+            if row.enterprise_kind in {"personal", "runtime", "department"}:
+                from octop.infra.agents.settings.tool_catalog import BUILTIN_TOOL_CATALOG
+
+                harness_cfg.tools_disabled = frozenset(
+                    {t.name for t in BUILTIN_TOOL_CATALOG} - SAFE_TOOLS
+                )
         applied = policy.apply_to_config(harness_cfg)
         applied = self._apply_team_host_config(applied, row)
         applied = self._merge_agently_write_interrupts(

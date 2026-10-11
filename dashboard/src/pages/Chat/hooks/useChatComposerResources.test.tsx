@@ -69,6 +69,16 @@ vi.mock("../../../context/AgentContext", () => ({
     agents: [
       { agent_id: "expertA", knowledge_base_ids: ["k1"] },
       { agent_id: "expertB", knowledge_base_ids: ["k3"] },
+      {
+        agent_id: "personal",
+        enterprise_kind: "personal",
+        knowledge_base_ids: ["k1"],
+      },
+      {
+        agent_id: "department",
+        enterprise_kind: "department",
+        knowledge_base_ids: ["k1"],
+      },
     ],
   }),
 }));
@@ -173,4 +183,35 @@ describe("useChatComposerResources — per-expert KB selection", () => {
       expect(result.current.selectedConnectors).toEqual(["c2"]),
     );
   });
+});
+
+describe("managed assistant composer", () => {
+  it.each(["personal", "department"])(
+    "keeps %s resources centrally assigned and ignores a saved model override",
+    async (agentId) => {
+      const { connectorsApi } = await import("../../../api/modules/connectors");
+      const { knowledgeBasesApi } = await import(
+        "../../../api/modules/knowledgeBases"
+      );
+      vi.mocked(connectorsApi.listInstances).mockClear();
+      vi.mocked(knowledgeBasesApi.getCapability).mockClear();
+      vi.mocked(knowledgeBasesApi.list).mockClear();
+      const { result } = renderHook(() =>
+        useChatComposerResources(agentId, "existing", "unapproved/model"),
+      );
+      await waitFor(() => expect(result.current.modelsReady).toBe(true));
+      expect(result.current.selectedModel).toBeNull();
+      expect(result.current.chatConnectors).toEqual([]);
+      expect(result.current.chatKnowledgeBases).toBeUndefined();
+      expect(connectorsApi.listInstances).not.toHaveBeenCalled();
+      expect(knowledgeBasesApi.getCapability).not.toHaveBeenCalled();
+      expect(knowledgeBasesApi.list).not.toHaveBeenCalled();
+      act(() => {
+        result.current.handleConnectorsChange(["external"]);
+        result.current.handleKnowledgeBaseIdsChange(["unassigned"]);
+      });
+      expect(result.current.selectedConnectors).toEqual([]);
+      expect(result.current.selectedKnowledgeBaseIds).toEqual([]);
+    },
+  );
 });

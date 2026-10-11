@@ -134,6 +134,9 @@ def build_app(server: OctopServer) -> FastAPI:
     # Bridge proxy must sit inside JWT auth so ``request.state.octop_user`` is set
     # (Starlette runs the last-added middleware first).
     install_bridge_proxy(app, server)
+    from octop.api.middleware.enterprise import EnterpriseMiddleware
+
+    app.add_middleware(EnterpriseMiddleware, server=server)
     install_jwt_auth(app, server)
     install_setup_lockdown(app, server)
 
@@ -174,6 +177,7 @@ def build_app(server: OctopServer) -> FastAPI:
         connectors,
         cron,
         desktop,
+        enterprise,
         envs,
         experts,
         health,
@@ -233,6 +237,7 @@ def build_app(server: OctopServer) -> FastAPI:
             _RouterMount(invites.admin_router, "/api/users/invites", ["users"]),
             _RouterMount(user_roles.router, "/api/users/roles", ["users"]),
             _RouterMount(users.router, "/api/users", ["users"]),
+            _RouterMount(enterprise.router, "/api/enterprise", ["users"]),
             _RouterMount(agents.router, "/api/agents", ["agents"]),
             _RouterMount(agent_tools.router, "/api", ["agents"]),
             _RouterMount(acp.router, "/api", ["agents"]),

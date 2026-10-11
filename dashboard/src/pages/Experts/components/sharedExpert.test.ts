@@ -85,3 +85,13 @@ describe("ownedTeamAgents", () => {
     expect(ownedTeamAgents(agents).map((a) => a.agent_id)).toEqual(["crew"]);
   });
 });
+
+it("does not expose full management for a personal assistant with profile-only rights", () => {
+  expect(
+    isOwnedExpert({
+      is_owner: true,
+      is_shared: false,
+      allowed_actions: { use: true, manage: false, edit_profile: true },
+    }),
+  ).toBe(false);
+});
